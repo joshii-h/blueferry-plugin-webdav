@@ -1,8 +1,11 @@
-"""Minimal WebDAV client.
+"""Minimal WebDAV client with Nextcloud extras.
 
 * ``PROPFIND`` (Depth 0 to check the login, Depth 1 to list a folder),
   ``MKCOL`` for the target folder, ``HEAD`` to avoid overwriting, ``PUT``
   streamed from the file, ``GET`` streamed into the cache.
+* Nextcloud: chunked upload v2 (``MKCOL``/``PUT``/``MOVE`` below
+  ``remote.php/dav/uploads/<user>/``) for large files and public links
+  through the OCS sharing API.
 
 Only https, except http to loopback and, when the user allows it, to hosts
 on the local network (checked again against the resolved addresses before
@@ -17,7 +20,10 @@ import base64
 import email.utils
 import http.client
 import ipaddress
+import json
 import os
+import re
+import secrets
 import socket
 import ssl
 import unicodedata
@@ -32,9 +38,12 @@ from blueferry_webdav import __version__
 TIMEOUT_SEC = 30.0
 MAX_XML_BYTES = 4 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
+# Nextcloud wants chunks of 5 MiB to 5 GiB (the last one may be smaller).
+CHUNK_BYTES = 10 * 1024 * 1024
 _BLOCK = 256 * 1024
 _MAX_NAME_BYTES = 200
 _LAN_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localdomain")
+_NEXTCLOUD_PATH = re.compile(r"^(?P<root>.*?)/remote\.php/dav/files/(?P<user>[^/]+)/(?P<sub>.*)$")
 _DAV = "{DAV:}"
 Progress = Callable[[int], None]
 
@@ -234,6 +243,27 @@ def parse_multistatus(data: bytes, folder_url: str) -> list[Entry]:
 # ---- HTTP ---------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class Nextcloud:
+    root: str        # https://host[/sub] (no trailing slash)
+    user: str        # the user segment as it appears in the URL (encoded)
+    sub: tuple[str, ...]  # decoded path below the user's files root
+
+    @property
+    def uploads(self) -> str:
+        return f"{self.root}/remote.php/dav/uploads/{self.user}/"
+
+
+def nextcloud_layout(base_url: str) -> Nextcloud | None:
+    parts = urllib.parse.urlsplit(base_url)
+    match = _NEXTCLOUD_PATH.match(parts.path)
+    if match is None:
+        return None
+    root = urllib.parse.urlunsplit((parts.scheme, parts.netloc, match["root"], "", ""))
+    sub = tuple(urllib.parse.unquote(s) for s in match["sub"].split("/") if s)
+    return Nextcloud(root=root, user=match["user"], sub=sub)
+
+
 def _status_token(code: int) -> str:
     return {
         401: "unauthorized", 403: "forbidden", 404: "not-found", 409: "conflict",
@@ -264,6 +294,7 @@ class WebDavClient:
         password: str,
         *,
         allow_http_lan: bool = False,
+        nextcloud: bool = False,
         timeout: float = TIMEOUT_SEC,
         resolve: Callable[[str], list[str]] | None = None,
     ) -> None:
@@ -272,6 +303,9 @@ class WebDavClient:
         token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
         self._auth = f"Basic {token}"
         self.timeout = timeout
+        layout = nextcloud_layout(self.base)
+        self.nextcloud = layout if nextcloud else None
+        self.layout = layout
         self._resolve = resolve or _resolve
 
     def __repr__(self) -> str:  # never show the credentials
@@ -378,6 +412,23 @@ class WebDavClient:
             "Depth": "0", "Content-Type": "application/xml; charset=utf-8",
         }, body=_PROPFIND_BODY)
 
+    def detect_nextcloud(self) -> bool:
+        """URL layout of Nextcloud and ``status.php`` saying so."""
+        if self.layout is None:
+            return False
+        try:
+            _status, data = self._simple(
+                "GET", self.layout.root + "/status.php", (200,), limit=MAX_JSON_BYTES,
+                headers={"Accept": "application/json"},
+            )
+            info = json.loads(data)
+        except (DavError, ValueError):
+            return False
+        return (
+            isinstance(info, dict) and info.get("installed") is True
+            and "nextcloud" in str(info.get("productname", "Nextcloud")).lower()
+        )
+
     def ensure_folder(self, segments: tuple[str, ...]) -> str:
         url = self.base
         for segment in segments:
@@ -414,11 +465,41 @@ class WebDavClient:
     ) -> str:
         """Store ``size`` bytes from ``source`` as ``name``; return its URL."""
         target = folder_url + urllib.parse.quote(name, safe="")
-        self._simple(
-            "PUT", target, (200, 201, 204), source=source, length=size, progress=progress,
-            headers={"Content-Type": "application/octet-stream"},
-        )
+        if self.nextcloud is not None and size > CHUNK_BYTES:
+            self._upload_chunked(source, size, target, progress)
+        else:
+            self._simple(
+                "PUT", target, (200, 201, 204), source=source, length=size, progress=progress,
+                headers={"Content-Type": "application/octet-stream"},
+            )
         return target
+
+    def _upload_chunked(
+        self, source: IO[bytes], size: int, target: str, progress: Progress | None,
+    ) -> None:
+        assert self.nextcloud is not None
+        folder = self.nextcloud.uploads + "blueferry-" + secrets.token_hex(12) + "/"
+        common = {"Destination": target, "OC-Total-Length": str(size)}
+        self._simple("MKCOL", folder, (201,), headers={"Destination": target})
+        try:
+            offset, index = 0, 1
+            while offset < size:
+                length = min(CHUNK_BYTES, size - offset)
+                self._simple(
+                    "PUT", f"{folder}{index:05d}", (200, 201, 204), source=source,
+                    length=length, progress=progress, headers=dict(common),
+                )
+                offset += length
+                index += 1
+            self._simple("MOVE", folder + ".file", (200, 201, 204), headers={
+                **common, "Overwrite": "F",
+            })
+        except DavError:
+            try:
+                self._simple("DELETE", folder, (200, 204, 404))
+            except DavError:
+                pass
+            raise
 
     def list_folder(self, segments: tuple[str, ...]) -> list[Entry]:
         url = self.folder_url(segments)
@@ -452,6 +533,37 @@ class WebDavClient:
             raise DavError("network") from None
         finally:
             response.close()  # type: ignore[attr-defined]
+
+    # ---- Nextcloud ----------------------------------------------------------
+
+    def share_link(self, segments: tuple[str, ...], name: str) -> str:
+        """A read-only public link through OCS; Nextcloud only."""
+        if self.nextcloud is None:
+            raise DavError("not-found")
+        path = "/" + "/".join((*self.nextcloud.sub, *segments, name))
+        body = urllib.parse.urlencode({"path": path, "shareType": "3", "permissions": "1"})
+        _status, data = self._simple(
+            "POST", self.nextcloud.root + "/ocs/v2.php/apps/files_sharing/api/v1/shares",
+            (200,), limit=MAX_JSON_BYTES, body=body.encode(), headers={
+                "OCS-APIRequest": "true", "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        try:
+            link = json.loads(data)["ocs"]["data"]["url"]
+        except (ValueError, KeyError, TypeError):
+            raise DavError("bad-response") from None
+        if not isinstance(link, str) or not re.fullmatch(r"https?://[^\s]{1,2000}", link):
+            raise DavError("bad-response")
+        return link
+
+    def web_folder_url(self, segments: tuple[str, ...]) -> str | None:
+        """Nextcloud's Files app for the folder; ``None`` elsewhere."""
+        if self.nextcloud is None:
+            return None
+        path = "/" + "/".join((*self.nextcloud.sub, *segments))
+        return self.nextcloud.root + "/index.php/apps/files/?dir=" + urllib.parse.quote(path)
+
 
 def _resolve(host: str) -> list[str]:
     return [str(info[4][0]) for info in socket.getaddrinfo(host, None)]
