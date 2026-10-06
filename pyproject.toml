@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blueferry-webdav"
+version = "0.1.0"
+description = "BlueFerry plugin: send files to a WebDAV share (Nextcloud, SFTPGo, ...)"
+readme = "README.md"
+license = {text = "GPL-2.0-or-later"}
+requires-python = ">=3.10"
+# Only blueferry.plugin_api is used. dbus-python, PyGObject and libsecret
+# come from the distribution (BlueFerry creates the plugin's venv with
+# --system-site-packages). HTTP is the standard library.
+# The ref is a branch for now; switch it to a BlueFerry release tag.
+dependencies = [
+  "blueferry-plugin-api @ git+https://github.com/joshii-h/blueferry@local/battlestation#subdirectory=plugin-api",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.5", "wsgidav>=4.3", "cheroot>=10"]
+
+[project.urls]
+Homepage = "https://github.com/joshii-h/blueferry-plugin-webdav"
+Source = "https://github.com/joshii-h/blueferry-plugin-webdav"
+
+[project.scripts]
+blueferry-webdav = "blueferry_webdav.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"blueferry_webdav" = ["*.plugin"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = ["B904", "RUF005", "RUF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["blueferry_webdav"]
+known-third-party = ["blueferry"]
