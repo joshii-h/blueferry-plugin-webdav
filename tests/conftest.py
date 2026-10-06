@@ -1,6 +1,7 @@
 """Keep tests away from the user's configuration, cache, keyring and bus.
 
-Server: a real WebDAV server (wsgidav) on 127.0.0.1 with a random port.
+Servers: a real WebDAV server (wsgidav) and a fake Nextcloud
+(:mod:`fake_nextcloud`), both on 127.0.0.1 with a random port.
 """
 from __future__ import annotations
 
@@ -110,4 +111,20 @@ def dav_server(tmp_path):
     yield SimpleNamespace(
         url=f"http://127.0.0.1:{server.server_port}/dav/", root=root, server=server,
     )
+    server.stop()
+
+
+@pytest.fixture
+def nextcloud(monkeypatch):
+    from fake_nextcloud import FakeNextcloud
+
+    from blueferry_webdav import webdav
+
+    chunk = 64 * 1024
+    monkeypatch.setattr(webdav, "CHUNK_BYTES", chunk)
+    fake = FakeNextcloud(USER, PASSWORD, min_chunk=chunk)
+    server = serve(fake)
+    fake.base = f"http://127.0.0.1:{server.server_port}"
+    fake.url = f"{fake.base}/nc/remote.php/dav/files/{USER}/"
+    yield fake
     server.stop()

@@ -380,6 +380,67 @@ def test_redirects_are_refused(tmp_path) -> None:
         server.stop()
 
 
+# ---- Nextcloud ----------------------------------------------------------------
+
+
+def test_nextcloud_chunked_upload_and_public_link(plugin, nextcloud, tmp_path) -> None:
+    host = plugin()
+    assert configure(host, nextcloud.url, public_link=True) == {"ok": True}
+    data = os.urandom(64 * 1024 * 3 + 123)
+    host.send_files("webdav", [write(tmp_path, "clip.mp4", data)])
+    assert nextcloud.files["/BlueFerry/clip.mp4"] == data
+    chunk_puts = [path for method, path in nextcloud.log
+                  if method == "PUT" and "/uploads/" in path]
+    assert len(chunk_puts) == 4 and chunk_puts[0].endswith("/00001")
+    assert ("MOVE" in {method for method, _path in nextcloud.log})
+    assert nextcloud.uploads == {}
+    assert nextcloud.shares[0]["path"] == "/BlueFerry/clip.mp4"
+    assert nextcloud.shares[0]["permissions"] == "1"
+
+    title, _body, _icon, label, _action = host.notifications[-1]
+    assert (title, label) == ("Hochgeladen", "Link kopieren")
+    result = host.click_notification()
+    assert result == {"ok": True, "message": "Link kopiert", "open_uri": None}
+    assert host.copied == ["https://cloud.example.org/s/tok1"]
+
+
+def test_nextcloud_small_files_use_one_put(plugin, nextcloud, tmp_path) -> None:
+    host = plugin(clipboard=False)
+    configure(host, nextcloud.url, public_link=True)
+    host.send_files("webdav", [write(tmp_path, "note.txt", b"small")])
+    assert not any("/uploads/" in path for _method, path in nextcloud.log)
+    assert nextcloud.files["/BlueFerry/note.txt"] == b"small"
+    result = host.click_notification()
+    assert result["open_uri"] == "https://cloud.example.org/s/tok1"  # no clipboard
+
+
+def test_nextcloud_folder_link_and_listing(plugin, nextcloud, tmp_path) -> None:
+    host = plugin()
+    configure(host, nextcloud.url, folder="Phone Uploads")
+    paths = [write(tmp_path, f"{n}.txt", str(n).encode()) for n in range(2)]
+    host.send_files("webdav", paths)
+    title, body, _icon, label, _action = host.notifications[-1]
+    assert (title, label) == ("Hochgeladen", "Ordner öffnen") and body.startswith("2 Dateien")
+    assert host.click_notification()["open_uri"] == (
+        nextcloud.base + "/nc/index.php/apps/files/?dir=/Phone%20Uploads"
+    )
+    items = host.card_items()
+    assert [item["title"] for item in items[1:]] == ["1.txt", "0.txt"]
+    opened = host.invoke(items[1]["id"], "open")
+    assert Path(opened["open_uri"][len("file://"):]).read_bytes() == b"1"
+
+
+def test_nextcloud_failed_chunk_cleans_up(plugin, nextcloud, tmp_path) -> None:
+    host = plugin()
+    configure(host, nextcloud.url)
+    nextcloud.fail_chunk = 2
+    host.send_files("webdav", [write(tmp_path, "big.bin", os.urandom(64 * 1024 * 3))])
+    assert host.notifications[-1][1] == "kein Speicherplatz mehr auf dem Server"
+    assert nextcloud.uploads == {}
+    assert ("DELETE" in {method for method, _path in nextcloud.log})
+    assert "/BlueFerry/big.bin" not in nextcloud.files
+
+
 def test_web_url_overrides_open_folder(plugin, dav_server, tmp_path) -> None:
     host = plugin()
     configure(host, dav_server.url, web_url="https://files.example.org/web/client/files")
