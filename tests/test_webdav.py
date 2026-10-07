@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 from blueferry.plugin_api.testing import inline_service
-from conftest import PASSWORD, USER, FakeSecret
+from blueferry_plugin_kit.testing import FakeSecret
+from conftest import PASSWORD, USER
 from fakehost import FakeHost
 
 from blueferry_webdav import CAPABILITIES, PLUGIN_ID, load_manifest, manifest_text
