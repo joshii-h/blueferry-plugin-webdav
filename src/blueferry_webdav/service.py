@@ -729,6 +729,9 @@ class WebDavService(SurfacesService):
         if action_id == "open_folder":
             try:
                 client = self._client(settings)
+                # Before the first upload the folder does not exist yet and
+                # the web UI would only show "folder not found".
+                client.ensure_folder(folder_segments(settings.folder))
             except DavError as error:
                 return action_result(False, self._message(error))
             return action_result(True, None, self._folder_web_url(client, settings))

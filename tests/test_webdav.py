@@ -391,6 +391,15 @@ def test_web_url_overrides_open_folder(plugin, dav_server, tmp_path) -> None:
     )
 
 
+def test_open_folder_creates_the_folder_first(plugin, nextcloud) -> None:
+    host = plugin()
+    configure(host, nextcloud.url)
+    assert "/BlueFerry" not in nextcloud.dirs
+    assert host.invoke("folder", "open_folder")["ok"]
+    assert "/BlueFerry" in nextcloud.dirs
+    assert host.invoke("folder", "open_folder")["ok"]
+
+
 # ---- command line -------------------------------------------------------------
 
 
