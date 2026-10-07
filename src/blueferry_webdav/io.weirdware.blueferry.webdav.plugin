@@ -11,34 +11,50 @@ Exec=blueferry-webdav serve
 Cli=blueferry-webdav
 Alias=webdav
 
+[ConfigGroup account]
+Label=Account
+Help=Sign in with Nextcloud, or enter the address and an app password by hand (SFTPGo and others).
+
 [Config url]
 Label=WebDAV address
 Type=string
 Required=true
-Help=Nextcloud: https://cloud.example.org/remote.php/dav/files/USER/ - SFTPGo or other: https://dav.example.org/
+Group=account
+Placeholder=https://cloud.example.org/remote.php/dav/files/anna/
+Example=https://dav.example.org/ (SFTPGo)
+Help=Nextcloud: the WebDAV address from Files > Settings; other servers: their WebDAV URL.
+HelpUrl=https://docs.nextcloud.com/server/latest/user_manual/en/files/access_webdav.html
 
 [Config username]
 Label=User name
 Type=string
 Required=true
+Group=account
+Placeholder=anna
 
 [Config password]
-Label=Password or app password
+Label=App password
 Type=secret
 Required=true
-Help=For Nextcloud create an app password under Settings > Security
+Group=account
+Help=Not your login password: Nextcloud > Settings > Security > Devices & sessions > Create new app password. Or use "Sign in with Nextcloud" above.
+HelpUrl=https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html
 
 [Config folder]
 Label=Target folder
 Type=string
 Default=BlueFerry
-Help=Created on the server if missing, for example BlueFerry or Phone/Uploads
+Group=options
+Placeholder=BlueFerry
+Example=Phone/Uploads
+Help=Created on the server if missing.
 
 [Config public_link]
-Label=Create a public link (Nextcloud only)
+Label=Create a public link
 Type=bool
 Default=false
-Help=After an upload, share the file by link through Nextcloud's sharing API
+Group=options
+Help=After an upload, share the file by link through Nextcloud's sharing API. Nextcloud only.
 
 [Config max_size_mb]
 Label=Size limit per file (MB)
@@ -46,14 +62,19 @@ Type=int
 Default=2048
 Min=1
 Max=102400
+Group=options
+ErrorText=Use 1 to 102400 MB.
 
 [Config allow_http_lan]
 Label=Allow plain http on the local network
 Type=bool
 Default=false
-Help=Only for servers in your LAN; passwords then travel unencrypted. http to localhost always works
+Advanced=true
+Help=Only for servers in your LAN; passwords then travel unencrypted. http to localhost always works.
 
 [Config web_url]
-Label=Web address of the folder (optional)
+Label=Web address of the folder
 Type=url
-Help=Opened by "Open folder" for servers other than Nextcloud, for example the SFTPGo web client
+Advanced=true
+Placeholder=https://files.example.org/web/client/files
+Help=Only for servers without Nextcloud, e.g. the SFTPGo web client: opened by "Open folder".
