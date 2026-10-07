@@ -254,6 +254,19 @@ def test_listing_ignores_foreign_and_nested_entries() -> None:
 # ---- generic WebDAV (wsgidav) ---------------------------------------------------
 
 
+@pytest.mark.parametrize("doctype", [
+    b'<!DOCTYPE d:multistatus SYSTEM "http://evil.example/x.dtd">',
+    b'<!DOCTYPE x [<!ENTITY e "boom">]>',
+])
+def test_listing_refuses_a_doctype_anywhere(doctype) -> None:
+    # A long comment pushes the DOCTYPE past the first 4 KiB.
+    data = (b'<?xml version="1.0"?><!--' + b"x" * 8192 + b"-->" + doctype
+            + b'<d:multistatus xmlns:d="DAV:"></d:multistatus>')
+    with pytest.raises(DavError) as caught:
+        parse_multistatus(data, "https://dav.example.org/f/")
+    assert caught.value.token == "bad-response"
+
+
 def test_settings_are_checked_against_the_server(plugin, dav_server) -> None:
     host = plugin()
     wrong = host.set_config({"url": dav_server.url, "username": USER, "password": "nope"})

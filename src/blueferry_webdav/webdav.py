@@ -35,6 +35,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Any
 
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+
 from blueferry_webdav import __version__
 
 TIMEOUT_SEC = 30.0
@@ -189,13 +192,14 @@ def _parse_time(value: str | None) -> float:
 
 
 def parse_multistatus(data: bytes, folder_url: str) -> list[Entry]:
-    """Files directly inside ``folder_url``; anything else is dropped."""
-    head = data[:4096].lower()
-    if b"<!doctype" in head or b"<!entity" in data.lower():
-        raise DavError("bad-response")
+    """Files directly inside ``folder_url``; anything else is dropped.
+
+    defusedxml refuses any DOCTYPE wherever it appears in the document (so
+    no entities, no external references), not only in the first bytes.
+    """
     try:
-        root = ET.fromstring(data)
-    except ET.ParseError:
+        root = SafeET.fromstring(data, forbid_dtd=True)
+    except (ET.ParseError, DefusedXmlException):
         raise DavError("bad-response") from None
     folder = urllib.parse.urlsplit(folder_url)
     folder_path = urllib.parse.unquote(folder.path)

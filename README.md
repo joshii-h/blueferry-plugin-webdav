@@ -96,6 +96,8 @@ stream; "Ordner öffnen" opens the WebDAV folder URL unless `web_url` is set.
   operation, every address must be private, and all requests of that
   operation connect to the checked address with the original `Host` header,
   so a DNS answer that changes in between (rebinding) is never followed.
+- Server answers are parsed with `defusedxml`; a `DOCTYPE` anywhere in
+  the XML (entities, external references) is refused.
 - Local file names are reduced to one safe path segment and
   percent-encoded; no `..`, no separators, no control characters. Existing
   files are never overwritten: a second `report.pdf` becomes
