@@ -1,7 +1,7 @@
 [BlueFerry Plugin]
 Id=io.weirdware.blueferry.webdav
 Name=WebDAV files
-Version=0.1.1
+Version=0.1.2
 ApiVersion=1.2
 MinBlueFerry=0.8
 Capabilities=card;share;notify;

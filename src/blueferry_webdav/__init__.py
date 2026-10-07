@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from blueferry.plugin_api.manifest import PluginManifest
 
 PLUGIN_ID = "io.weirdware.blueferry.webdav"
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 # The surfaces of plugin contract 1.2 this plugin implements.
 CAPABILITIES = ("card", "share", "notify")
 
