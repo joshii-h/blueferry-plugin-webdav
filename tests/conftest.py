@@ -120,9 +120,8 @@ def dav_server(tmp_path):
 
 @pytest.fixture
 def nextcloud(monkeypatch):
+    from blueferry_plugin_kit.dav import webdav
     from fake_nextcloud import FakeNextcloud
-
-    from blueferry_webdav import webdav
 
     chunk = 64 * 1024
     monkeypatch.setattr(webdav, "CHUNK_BYTES", chunk)

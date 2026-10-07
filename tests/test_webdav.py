@@ -10,6 +10,14 @@ from pathlib import Path
 
 import pytest
 from blueferry.plugin_api.testing import inline_service
+from blueferry_plugin_kit.dav.webdav import (
+    DavError,
+    WebDavClient,
+    folder_segments,
+    normalize_base,
+    parse_multistatus,
+    safe_name,
+)
 from conftest import PASSWORD, USER, FakeSecret, serve
 from fakehost import FakeHost
 
@@ -19,14 +27,6 @@ from blueferry_webdav.cache import DownloadCache
 from blueferry_webdav.service import WebDavService
 from blueferry_webdav.settings import SettingsStore
 from blueferry_webdav.surfaces import CardItem, plain
-from blueferry_webdav.webdav import (
-    DavError,
-    WebDavClient,
-    folder_segments,
-    normalize_base,
-    parse_multistatus,
-    safe_name,
-)
 
 # ---- helpers ------------------------------------------------------------------
 

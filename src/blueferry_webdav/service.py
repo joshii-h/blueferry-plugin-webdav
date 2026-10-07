@@ -17,7 +17,16 @@ from typing import Any
 
 from blueferry.plugin_api.config import ConfigError
 from blueferry.plugin_api.manifest import PluginManifest
+from blueferry_plugin_kit.dav.webdav import (
+    DavError,
+    Entry,
+    WebDavClient,
+    folder_segments,
+    normalize_base,
+    safe_name,
+)
 
+from blueferry_webdav import __version__
 from blueferry_webdav.cache import DownloadCache, blocked
 from blueferry_webdav.clipboard import copy_to_clipboard
 from blueferry_webdav.i18n import german, t
@@ -30,18 +39,11 @@ from blueferry_webdav.surfaces import (
     SurfacesService,
     action_result,
 )
-from blueferry_webdav.webdav import (
-    DavError,
-    Entry,
-    WebDavClient,
-    folder_segments,
-    normalize_base,
-    safe_name,
-)
 
 log = logging.getLogger(__name__)
 
 TARGET_ID = "webdav"
+USER_AGENT = f"blueferry-webdav/{__version__}"
 RECENT_COUNT = 5
 LIST_TTL_SEC = 60.0
 PROGRESS_INTERVAL_SEC = 1.0
@@ -55,6 +57,11 @@ _CONFIG_TEXT = {
     "insecure": ("url", "plain http is only allowed for localhost or, when allowed, the LAN"),
     "invalid-url": ("url", "must be an https:// address without user name or query"),
 }
+
+
+def new_client(*args: Any, **kwargs: Any) -> WebDavClient:
+    """A :class:`WebDavClient` that sends this plugin's User-Agent."""
+    return WebDavClient(*args, user_agent=USER_AGENT, **kwargs)
 
 
 def text_for(error: DavError) -> str:
@@ -128,7 +135,7 @@ class WebDavService(SurfacesService):
         *,
         settings: SettingsStore | None = None,
         cache: DownloadCache | None = None,
-        client_factory: Callable[..., WebDavClient] = WebDavClient,
+        client_factory: Callable[..., WebDavClient] = new_client,
         clipboard: Callable[[str], bool] = copy_to_clipboard,
         **kwargs: Any,
     ) -> None:
