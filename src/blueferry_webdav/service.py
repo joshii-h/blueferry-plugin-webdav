@@ -20,6 +20,7 @@ from blueferry.plugin_api.manifest import PluginManifest
 
 from blueferry_webdav.cache import DownloadCache, blocked
 from blueferry_webdav.clipboard import copy_to_clipboard
+from blueferry_webdav.i18n import german, t
 from blueferry_webdav.settings import DEFAULT_FOLDER, Settings, SettingsError, SettingsStore
 from blueferry_webdav.surfaces import (
     NOTIFY_ITEM,
@@ -41,28 +42,11 @@ from blueferry_webdav.webdav import (
 log = logging.getLogger(__name__)
 
 TARGET_ID = "webdav"
-TARGET_LABEL = "Ablage (WebDAV)"
 RECENT_COUNT = 5
 LIST_TTL_SEC = 60.0
 PROGRESS_INTERVAL_SEC = 1.0
 MAX_SHOWN_JOBS = 2
 MAX_NOTIFY_ACTIONS = 32
-SETUP_HINT = "Adresse, Benutzer und Passwort in den Plugin-Einstellungen eintragen"
-ERROR_TEXT = {
-    "unauthorized": "Benutzer oder Passwort abgelehnt",
-    "forbidden": "keine Berechtigung auf dem Server",
-    "not-found": "auf dem Server nicht gefunden",
-    "conflict": "Zielordner fehlt oder ist keine Ablage",
-    "too-large": "Datei zu groß",
-    "no-space": "kein Speicherplatz mehr auf dem Server",
-    "server-error": "der Server meldet einen Fehler",
-    "network": "Server nicht erreichbar",
-    "bad-response": "Antwort des Servers nicht verstanden",
-    "redirect": "der Server leitet um; Adresse prüfen",
-    "invalid-url": "Adresse ungültig",
-    "insecure": "nur https erlaubt (http nur im LAN, wenn erlaubt)",
-    "exists": "zu viele gleichnamige Dateien",
-}
 _CONFIG_TEXT = {
     "unauthorized": ("password", "the server rejected user name or password"),
     "forbidden": ("password", "this account may not use the WebDAV address"),
@@ -74,7 +58,9 @@ _CONFIG_TEXT = {
 
 
 def text_for(error: DavError) -> str:
-    return ERROR_TEXT.get(error.token, error.token)
+    key = "err_" + error.token
+    text = t(key)
+    return error.token if text == key else text
 
 
 def human_size(size: int) -> str:
@@ -82,7 +68,7 @@ def human_size(size: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if value < 1024 or unit == "GB":
             text = f"{value:.0f}" if unit == "B" else f"{value:.1f}"
-            return f"{text.replace('.', ',')} {unit}"
+            return f"{text.replace('.', ',') if german() else text} {unit}"
         value /= 1024
     return f"{size} B"  # pragma: no cover
 
@@ -108,16 +94,17 @@ class Job:
     last_emit: float = 0.0
 
     def item(self) -> CardItem:
-        name = self.names[0] if len(self.names) == 1 else f"{len(self.names)} Dateien"
+        name = self.names[0] if len(self.names) == 1 else t("files", count=len(self.names))
         if self.state == "failed":
             return CardItem(
-                f"job-{self.id}", "dialog-error", f"Fehlgeschlagen: {name}", self.message,
-                [Action("dismiss", "Ausblenden", "window-close")],
+                f"job-{self.id}", "dialog-error", t("failed", name=name), self.message,
+                [Action("dismiss", t("dismiss"), "window-close")],
             )
         percent = 100 if self.total == 0 else min(100, self.sent * 100 // self.total)
         return CardItem(
-            f"job-{self.id}", "document-send", f"Lädt hoch: {name}",
-            f"{percent} % · {human_size(self.sent)} von {human_size(self.total)}",
+            f"job-{self.id}", "document-send", t("uploading", name=name),
+            t("progress", percent=percent, sent=human_size(self.sent),
+              total=human_size(self.total)),
         )
 
 
@@ -190,13 +177,13 @@ class WebDavService(SurfacesService):
         except SettingsError as error:
             return {"state": "error", "detail": str(error)}
         if settings is None:
-            return {"state": "unconfigured", "detail": SETUP_HINT}
+            return {"state": "unconfigured", "detail": t("setup_hint")}
         server = urllib.parse.urlsplit(settings.url).hostname or ""
         with self._lock:
             running = sum(job.state == "running" for job in self._jobs.values())
             last_error = self._last_error
         if running:
-            return {"state": "busy", "server": server, "detail": f"{running} Upload(s) laufen"}
+            return {"state": "busy", "server": server, "detail": t("busy", count=running)}
         if last_error:
             return {"state": "error", "server": server, "detail": last_error}
         return {"state": "ok", "server": server}
@@ -284,37 +271,37 @@ class WebDavService(SurfacesService):
     # ---- share ---------------------------------------------------------------
 
     def share_targets(self) -> list[ShareTarget]:
-        return [ShareTarget(TARGET_ID, TARGET_LABEL, "folder-cloud")]
+        return [ShareTarget(TARGET_ID, t("target_label"), "folder-cloud")]
 
     def send_files(self, target_id: str, paths: list[str]) -> str:
         def answer(ok: bool, message: str | None, job: str | None = None) -> str:
             return json.dumps({"ok": ok, "message": message, "job": job})
 
         if target_id != TARGET_ID:
-            return answer(False, "unbekanntes Ziel")
+            return answer(False, t("unknown_target"))
         if not paths:
-            return answer(False, "keine Dateien")
+            return answer(False, t("no_files"))
         try:
             settings = self._load()
         except DavError as error:
             return answer(False, self._message(error))
         if settings is None:
-            return answer(False, "WebDAV ist nicht eingerichtet: " + SETUP_HINT)
+            return answer(False, t("not_set_up_send", hint=t("setup_hint")))
         files: list[tuple[str, str, int]] = []
         for path in paths:
             name = safe_name(path)
             if not os.path.isabs(path) or "\x00" in path:
-                return answer(False, f"{name}: kein absoluter Pfad")
+                return answer(False, t("not_absolute", name=name))
             try:
                 info = os.stat(path)
             except OSError:
-                return answer(False, f"{name}: nicht lesbar")
+                return answer(False, t("not_readable", name=name))
             if not stat.S_ISREG(info.st_mode):
-                return answer(False, f"{name}: keine normale Datei")
+                return answer(False, t("not_regular", name=name))
             if info.st_size > settings.max_bytes:
-                return answer(False, f"{name} ist größer als {settings.max_size_mb} MB")
+                return answer(False, t("too_big", name=name, limit=settings.max_size_mb))
             if not os.access(path, os.R_OK):
-                return answer(False, f"{name}: nicht lesbar")
+                return answer(False, t("not_readable", name=name))
             files.append((path, name, info.st_size))
         job = Job(id=secrets.token_hex(8), names=[name for _p, name, _s in files],
                   total=sum(size for _p, _n, size in files))
@@ -323,7 +310,7 @@ class WebDavService(SurfacesService):
         log.info("upload started: %d file(s)", len(files))
         self.emit_card_changed()
         self.start_job(lambda: self._upload(job, files, settings))
-        return answer(True, "Hochladen gestartet", job.id)
+        return answer(True, t("upload_started"), job.id)
 
     def _progress(self, job: Job, sent: int) -> None:
         now = self._clock()
@@ -354,14 +341,14 @@ class WebDavService(SurfacesService):
                 stored.append(remote)
         except (DavError, OSError, ValueError) as error:
             message = self._message(error) if isinstance(error, DavError) else (
-                "Datei nicht lesbar" if isinstance(error, OSError) else "Zielordner ungültig"
+                t("file_unreadable") if isinstance(error, OSError) else t("bad_folder")
             )
             log.info("upload failed: %s", getattr(error, "token", type(error).__name__))
             with self._lock:
                 job.state, job.message = "failed", message
                 self._last_error = message
             self.emit_card_changed()
-            self.emit_notify("Hochladen fehlgeschlagen", message, "dialog-error")
+            self.emit_notify(t("upload_failed"), message, "dialog-error")
             return
         link = None
         link_failed = False
@@ -377,16 +364,16 @@ class WebDavService(SurfacesService):
             self._last_error = ""
         log.info("upload finished: %d file(s)", len(stored))
         self.emit_card_changed()
-        what = stored[0] if len(stored) == 1 else f"{len(stored)} Dateien"
+        what = stored[0] if len(stored) == 1 else t("files", count=len(stored))
         body = f"{what} → {'/'.join(segments)}"
         if link_failed:
-            body += " (Link konnte nicht erstellt werden)"
+            body += t("link_failed")
         if link:
             action_id = self._remember_action("link", link)
-            self.emit_notify("Hochgeladen", body, "folder-cloud", "Link kopieren", action_id)
+            self.emit_notify(t("uploaded"), body, "folder-cloud", t("copy_link"), action_id)
         else:
             action_id = self._remember_action("folder", self._folder_web_url(client, settings))
-            self.emit_notify("Hochgeladen", body, "folder-cloud", "Ordner öffnen", action_id)
+            self.emit_notify(t("uploaded"), body, "folder-cloud", t("open_folder"), action_id)
 
     def _folder_web_url(self, client: WebDavClient, settings: Settings) -> str:
         segments = folder_segments(settings.folder)
@@ -433,35 +420,36 @@ class WebDavService(SurfacesService):
         try:
             settings = self._load()
         except DavError as error:
-            return [*jobs, CardItem("setup", "dialog-error", TARGET_LABEL, self._message(error))]
+            return [*jobs, CardItem("setup", "dialog-error", t("target_label"),
+                                    self._message(error))]
         if settings is None:
             return [*jobs, CardItem(
-                "setup", "folder-remote", "Ablage (WebDAV) nicht eingerichtet", SETUP_HINT,
+                "setup", "folder-remote", t("not_set_up"), t("setup_hint"),
             )]
         host = urllib.parse.urlsplit(settings.url).hostname or ""
         header_actions = [
-            Action("refresh", "Aktualisieren", "view-refresh"),
-            Action("open_folder", "Ordner öffnen", "folder-open"),
+            Action("refresh", t("refresh"), "view-refresh"),
+            Action("open_folder", t("open_folder"), "folder-open"),
         ]
         try:
             entries = self._recent(settings)
         except DavError as error:
             return [*jobs, CardItem(
-                "folder", "dialog-warning", "Zuletzt hochgeladen",
+                "folder", "dialog-warning", t("recent"),
                 self._message(error), header_actions,
             )]
         subtitle = f"{host} · /{settings.folder}"
         if not entries:
-            subtitle += " · noch nichts hochgeladen"
-        items = [*jobs, CardItem("folder", "folder-remote", "Zuletzt hochgeladen", subtitle,
+            subtitle += t("nothing_yet")
+        items = [*jobs, CardItem("folder", "folder-remote", t("recent"), subtitle,
                                  header_actions)]
         for entry in entries:
-            when = time.strftime("%d.%m.%Y %H:%M", time.localtime(entry.modified)) \
+            when = time.strftime(t("date"), time.localtime(entry.modified)) \
                 if entry.modified else ""
             items.append(CardItem(
                 entry_id(entry), icon_for(entry.name, entry.content_type), entry.name,
                 " · ".join(part for part in (human_size(entry.size), when) if part),
-                [Action("open", "Öffnen", "document-open", "primary")],
+                [Action("open", t("open"), "document-open", "primary")],
             ))
         return items
 
@@ -481,18 +469,18 @@ class WebDavService(SurfacesService):
             return action_result(True)
         if item_id.startswith("f-") and action_id == "open":
             return self._open(item_id)
-        return action_result(False, "unbekannte Aktion")
+        return action_result(False, t("unknown_action"))
 
     def _notify_action(self, action_id: str) -> str:
         with self._lock:
             known = self._notify_actions.get(action_id)
         if known is None:
-            return action_result(False, "Diese Benachrichtigung ist abgelaufen")
+            return action_result(False, t("expired"))
         kind, value = known
         if kind == "link":
             if self._clipboard(value):
-                return action_result(True, "Link kopiert")
-            return action_result(True, "Zwischenablage nicht verfügbar; Link wird geöffnet", value)
+                return action_result(True, t("link_copied"))
+            return action_result(True, t("no_clipboard"), value)
         return action_result(True, None, value)
 
     def _folder_action(self, action_id: str) -> str:
@@ -501,25 +489,25 @@ class WebDavService(SurfacesService):
         except DavError as error:
             return action_result(False, self._message(error))
         if settings is None:
-            return action_result(False, SETUP_HINT)
+            return action_result(False, t("setup_hint"))
         if action_id == "refresh":
             with self._lock:
                 self._listing = _Listing()
             self.emit_card_changed()
-            return action_result(True, "Aktualisiert")
+            return action_result(True, t("refreshed"))
         if action_id == "open_folder":
             try:
                 client = self._client(settings)
             except DavError as error:
                 return action_result(False, self._message(error))
             return action_result(True, None, self._folder_web_url(client, settings))
-        return action_result(False, "unbekannte Aktion")
+        return action_result(False, t("unknown_action"))
 
     def _open(self, item_id: str) -> str:
         try:
             settings = self._load()
             if settings is None:
-                return action_result(False, SETUP_HINT)
+                return action_result(False, t("setup_hint"))
             with self._lock:
                 entry = self._entries.get(item_id)
             if entry is None:
@@ -528,14 +516,12 @@ class WebDavService(SurfacesService):
                 with self._lock:
                     entry = self._entries.get(item_id)
             if entry is None:
-                return action_result(False, "Datei nicht mehr vorhanden")
+                return action_result(False, t("gone"))
             name = safe_name(entry.name)
             if blocked(name):
-                return action_result(
-                    False, "Dieser Dateityp wird aus Sicherheitsgründen nicht geöffnet",
-                )
+                return action_result(False, t("blocked"))
             if entry.size > settings.max_bytes:
-                return action_result(False, f"größer als {settings.max_size_mb} MB")
+                return action_result(False, t("larger_than", limit=settings.max_size_mb))
             path = self._cache.cached(item_id, name, entry.size)
             if path is None:
                 client = self._client(settings)
@@ -546,5 +532,5 @@ class WebDavService(SurfacesService):
         except DavError as error:
             return action_result(False, self._message(error))
         except OSError:
-            return action_result(False, "Cache nicht beschreibbar")
+            return action_result(False, t("cache_error"))
         return action_result(True, None, path.as_uri())

@@ -15,6 +15,10 @@ A plugin for [BlueFerry](https://github.com/joshii-h/blueferry). It adds:
   folder. "Öffnen" downloads a file into the plugin cache and opens it;
   "Aktualisieren" reloads the list.
 
+Texts are German or English, following the locale (`LC_ALL`,
+`LC_MESSAGES`, `LANGUAGE`, `LANG`); the names above are the German ones
+("Storage (WebDAV)", "Uploaded", "Recently uploaded" in English).
+
 It runs as its own process on the session bus and implements the plugin
 contract 1.2 (`card`, `share`, `notify`; see `PLUGINS.md` in the BlueFerry
 repository). It needs a BlueFerry that understands contract 1.2; older

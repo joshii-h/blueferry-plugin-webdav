@@ -24,6 +24,10 @@ os.environ["XDG_DATA_DIRS"] = os.path.join(_scratch, "system")
 os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/nonexistent/blueferry-webdav-tests"
 os.environ.pop("WAYLAND_DISPLAY", None)
 os.environ.pop("DISPLAY", None)
+# The card and notification assertions are in German; one test switches.
+for _variable in ("LC_ALL", "LC_MESSAGES", "LANGUAGE"):
+    os.environ.pop(_variable, None)
+os.environ["LANG"] = "de_CH.UTF-8"
 
 USER = "alice"
 PASSWORD = "Pa55-w0rd-not-for-logs"

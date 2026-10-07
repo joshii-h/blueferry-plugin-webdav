@@ -1,0 +1,126 @@
+"""User-visible strings in German and English, picked from the locale
+(the same scheme as blueferry-plugin-localsend)."""
+from __future__ import annotations
+
+import os
+
+_DE = {
+    "target_label": "Ablage (WebDAV)",
+    "setup_hint": "Adresse, Benutzer und Passwort in den Plugin-Einstellungen eintragen",
+    "not_set_up": "Ablage (WebDAV) nicht eingerichtet",
+    "not_set_up_send": "WebDAV ist nicht eingerichtet: {hint}",
+    "err_unauthorized": "Benutzer oder Passwort abgelehnt",
+    "err_forbidden": "keine Berechtigung auf dem Server",
+    "err_not-found": "auf dem Server nicht gefunden",
+    "err_conflict": "Zielordner fehlt oder ist keine Ablage",
+    "err_too-large": "Datei zu groß",
+    "err_no-space": "kein Speicherplatz mehr auf dem Server",
+    "err_server-error": "der Server meldet einen Fehler",
+    "err_network": "Server nicht erreichbar",
+    "err_bad-response": "Antwort des Servers nicht verstanden",
+    "err_redirect": "der Server leitet um; Adresse prüfen",
+    "err_invalid-url": "Adresse ungültig",
+    "err_insecure": "nur https erlaubt (http nur im LAN, wenn erlaubt)",
+    "err_exists": "zu viele gleichnamige Dateien",
+    "files": "{count} Dateien",
+    "failed": "Fehlgeschlagen: {name}",
+    "dismiss": "Ausblenden",
+    "uploading": "Lädt hoch: {name}",
+    "progress": "{percent} % · {sent} von {total}",
+    "busy": "{count} Upload(s) laufen",
+    "unknown_target": "unbekanntes Ziel",
+    "no_files": "keine Dateien",
+    "not_absolute": "{name}: kein absoluter Pfad",
+    "not_readable": "{name}: nicht lesbar",
+    "not_regular": "{name}: keine normale Datei",
+    "too_big": "{name} ist größer als {limit} MB",
+    "upload_started": "Hochladen gestartet",
+    "file_unreadable": "Datei nicht lesbar",
+    "bad_folder": "Zielordner ungültig",
+    "upload_failed": "Hochladen fehlgeschlagen",
+    "uploaded": "Hochgeladen",
+    "link_failed": " (Link konnte nicht erstellt werden)",
+    "copy_link": "Link kopieren",
+    "open_folder": "Ordner öffnen",
+    "refresh": "Aktualisieren",
+    "refreshed": "Aktualisiert",
+    "recent": "Zuletzt hochgeladen",
+    "nothing_yet": " · noch nichts hochgeladen",
+    "open": "Öffnen",
+    "unknown_action": "unbekannte Aktion",
+    "expired": "Diese Benachrichtigung ist abgelaufen",
+    "link_copied": "Link kopiert",
+    "no_clipboard": "Zwischenablage nicht verfügbar; Link wird geöffnet",
+    "gone": "Datei nicht mehr vorhanden",
+    "blocked": "Dieser Dateityp wird aus Sicherheitsgründen nicht geöffnet",
+    "larger_than": "größer als {limit} MB",
+    "cache_error": "Cache nicht beschreibbar",
+    "date": "%d.%m.%Y %H:%M",
+}
+
+_EN = {
+    "target_label": "Storage (WebDAV)",
+    "setup_hint": "Enter address, user and password in the plugin settings",
+    "not_set_up": "Storage (WebDAV) not set up",
+    "not_set_up_send": "WebDAV is not set up: {hint}",
+    "err_unauthorized": "user name or password rejected",
+    "err_forbidden": "no permission on the server",
+    "err_not-found": "not found on the server",
+    "err_conflict": "the target folder is missing or not a folder",
+    "err_too-large": "file too large",
+    "err_no-space": "no space left on the server",
+    "err_server-error": "the server reports an error",
+    "err_network": "server not reachable",
+    "err_bad-response": "the server's answer was not understood",
+    "err_redirect": "the server redirects; check the address",
+    "err_invalid-url": "invalid address",
+    "err_insecure": "https only (http only in the LAN, when allowed)",
+    "err_exists": "too many files with the same name",
+    "files": "{count} files",
+    "failed": "Failed: {name}",
+    "dismiss": "Dismiss",
+    "uploading": "Uploading: {name}",
+    "progress": "{percent}% · {sent} of {total}",
+    "busy": "{count} upload(s) running",
+    "unknown_target": "unknown target",
+    "no_files": "no files",
+    "not_absolute": "{name}: not an absolute path",
+    "not_readable": "{name}: not readable",
+    "not_regular": "{name}: not a regular file",
+    "too_big": "{name} is larger than {limit} MB",
+    "upload_started": "Upload started",
+    "file_unreadable": "file not readable",
+    "bad_folder": "invalid target folder",
+    "upload_failed": "Upload failed",
+    "uploaded": "Uploaded",
+    "link_failed": " (could not create a link)",
+    "copy_link": "Copy link",
+    "open_folder": "Open folder",
+    "refresh": "Refresh",
+    "refreshed": "Refreshed",
+    "recent": "Recently uploaded",
+    "nothing_yet": " · nothing uploaded yet",
+    "open": "Open",
+    "unknown_action": "unknown action",
+    "expired": "This notification has expired",
+    "link_copied": "Link copied",
+    "no_clipboard": "Clipboard not available; opening the link",
+    "gone": "The file is gone",
+    "blocked": "This file type is not opened, for safety",
+    "larger_than": "larger than {limit} MB",
+    "cache_error": "Cache not writable",
+    "date": "%Y-%m-%d %H:%M",
+}
+
+
+def german() -> bool:
+    for variable in ("LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"):
+        value = os.environ.get(variable)
+        if value:
+            return value.split(":")[0].lower().startswith("de")
+    return False
+
+
+def t(key: str, **values: object) -> str:
+    table = _DE if german() else _EN
+    return table.get(key, _EN.get(key, key)).format(**values)

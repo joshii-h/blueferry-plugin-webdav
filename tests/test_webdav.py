@@ -301,6 +301,25 @@ def test_upload_lists_and_opens(plugin, dav_server, tmp_path) -> None:
     assert oct(local.stat().st_mode & 0o777) == "0o600"
 
 
+def test_texts_follow_the_locale(plugin, dav_server, tmp_path, monkeypatch) -> None:
+    from blueferry_webdav import i18n
+
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    host = plugin()
+    assert host.share_targets()[0]["label"] == "Storage (WebDAV)"
+    assert host.card_items()[0]["title"] == "Storage (WebDAV) not set up"
+    assert configure(host, dav_server.url) == {"ok": True}
+    host.send_files("webdav", [write(tmp_path, "a.txt", b"x" * 1500)])
+    title, _body, _icon, label, _action = host.notifications[-1]
+    assert (title, label) == ("Uploaded", "Open folder")
+    folder = host.card_items()[0]
+    assert folder["title"] == "Recently uploaded"
+    assert [a["label"] for a in folder["actions"]] == ["Refresh", "Open folder"]
+    assert "1.5 KB" in host.card_items()[1]["subtitle"]
+    # Both tables have the same keys.
+    assert i18n._DE.keys() == i18n._EN.keys()
+
+
 def test_card_shows_the_newest_five(plugin, dav_server, tmp_path) -> None:
     host = plugin()
     configure(host, dav_server.url)
