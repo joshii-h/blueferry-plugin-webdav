@@ -20,9 +20,10 @@ Texts are German or English, following the locale (`LC_ALL`,
 ("Storage (WebDAV)", "Uploaded", "Recently uploaded" in English).
 
 It runs as its own process on the session bus and implements the plugin
-contract 1.2 (`card`, `share`, `notify`; see `PLUGINS.md` in the BlueFerry
-repository). It needs a BlueFerry that understands contract 1.2; older
-versions ignore the plugin.
+contract 1.3 (`card`, `share`, `notify`, guided settings with "Test
+connection" and "Sign in with Nextcloud"; see `PLUGINS.md` in the BlueFerry
+repository). It needs a BlueFerry that understands contract 1.3; older
+versions ignore the plugin with a message.
 
 ## Install
 
@@ -37,7 +38,19 @@ confirm.
 
 ## Configure
 
-In BlueFerry's settings, Plugins > WebDAV files > Settings, or:
+In BlueFerry's settings, Plugins > WebDAV files > Settings. With Nextcloud
+the easiest way is **Sign in with Nextcloud**: type the server address
+(`https://cloud.example.org` is enough), press the button, grant access in
+the browser. The plugin receives a new app password straight from
+Nextcloud (it goes into the keyring, never through BlueFerry or a log) and
+sets the address to `…/remote.php/dav/files/<user>/` itself. Only https
+servers can be used this way. From a shell:
+
+```sh
+blueferry plugins config io.weirdware.blueferry.webdav --set url=https://cloud.example.org --login
+```
+
+By hand (SFTPGo and other servers):
 
 ```sh
 blueferry plugins config io.weirdware.blueferry.webdav \
@@ -45,11 +58,16 @@ blueferry plugins config io.weirdware.blueferry.webdav \
     --set username=USER --secret password
 ```
 
+**Test connection** (`--test`) logs in with the typed values, checks the
+target folder and whether files can be stored there (it creates and
+removes an empty probe folder), and stores nothing: "Connected as anna;
+folder BlueFerry is writable."
+
 | Setting | Meaning |
 | --- | --- |
 | `url` | The WebDAV address (see below). `https://` only; plain `http://` for localhost, or for the LAN when `allow_http_lan` is on. |
-| `username` | Your login name. |
-| `password` | Password or app password. Checked against the server before it is stored. |
+| `username` | Your login name (filled in by the Nextcloud sign-in). |
+| `password` | Password or app password. Checked against the server before it is stored; a stored one is only reused for the same address and user. |
 | `folder` | Target folder below the address, default `BlueFerry`; created if missing. Sub folders with `/`. |
 | `public_link` | Nextcloud only: create a read-only public link after an upload. |
 | `max_size_mb` | Largest file to upload or open, default 2048 MB. |
@@ -126,10 +144,12 @@ python3 -m venv --system-site-packages .venv   # dbus-python, PyGObject, libsecr
 BlueFerry repository. The WebDAV client, the clipboard helper and the
 keyring store come from
 [blueferry-plugin-kit](https://github.com/joshii-h/blueferry-plugin-kit)
-(tag `kit-v0.1.0`), which also has their tests. The tests run a real WebDAV server (wsgidav) and a
-fake Nextcloud (chunked upload v2, OCS shares) on localhost, and drive the
-plugin through a fake BlueFerry core that checks every reply against the
-1.2 surface spec. The plugin has not been tested against a live Nextcloud
+(tag `kit-v0.2.0`), which also has their tests, as does the Nextcloud
+Login Flow v2 (`blueferry_plugin_kit.auth.nextcloud`). The tests run a real
+WebDAV server (wsgidav) and a fake Nextcloud (chunked upload v2, OCS
+shares, Login Flow v2 over https with a test CA) on localhost, and drive
+the plugin through a fake BlueFerry core that checks every reply against
+the plugin API spec. The plugin has not been tested against a live Nextcloud
 or SFTPGo yet.
 
 ## License
