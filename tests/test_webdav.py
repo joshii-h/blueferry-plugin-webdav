@@ -76,7 +76,8 @@ def test_manifest_declares_the_surfaces_and_settings() -> None:
     manifest = load_manifest()
     assert manifest.id == PLUGIN_ID
     assert manifest.capabilities == CAPABILITIES
-    assert "ApiVersion=1.2" in manifest_text()
+    assert "ApiVersion=1.3" in manifest_text()
+    assert manifest.config_test is True
     keys = [field.key for field in manifest.config]
     assert keys == ["url", "username", "password", "folder", "public_link", "max_size_mb",
                     "allow_http_lan", "web_url"]
@@ -91,13 +92,13 @@ def test_all_surfaces_live_on_plugin1() -> None:
     assert set(table) - {"org.freedesktop.DBus.Introspectable"} == {PLUGIN_INTERFACE}
     members = set(table[PLUGIN_INTERFACE])
     assert {"GetCardItems", "CardChanged", "InvokeAction", "ShareTargets", "SendFiles",
-            "Notify", "GetInfo", "Status", "GetConfig", "SetConfig"} <= members
+            "Notify", "GetInfo", "Status", "GetConfig", "SetConfig", "TestConfig"} <= members
 
 
-def test_info_reports_contract_1_2(plugin) -> None:
+def test_info_reports_contract_1_3(plugin) -> None:
     host = plugin()
     info = host.info()
-    assert info["api_version"] == 1 and info["api_minor"] >= 2
+    assert info["api_version"] == 1 and info["api_minor"] == 3
     assert set(info["capabilities"]) == {"card", "share", "notify"}
     assert host.share_targets() == [
         {"id": "webdav", "label": "Ablage (WebDAV)", "icon": "folder-cloud"},
@@ -143,6 +144,49 @@ def test_settings_are_checked_against_the_server(plugin, dav_server) -> None:
     assert values["password"] == "********" and values["folder"] == "BlueFerry"
     assert values["max_size_mb"] == 2048
     assert host.status() == {"state": "ok", "server": "127.0.0.1"}
+
+
+def test_test_connection_stores_nothing(plugin, dav_server, caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    host = plugin()
+    values = {"url": dav_server.url, "username": USER, "password": PASSWORD}
+    result = host.test_config(values)
+    assert result == {"ok": True, "message":
+                      "Verbunden als alice; Ordner BlueFerry wird beim ersten Upload angelegt."}
+    stored = host.get_config()["values"]               # nothing stored
+    assert stored["password"] == "" and not stored["url"]
+    assert host.status()["state"] == "unconfigured"
+    assert not list(dav_server.root.iterdir())        # the probe was removed
+    (dav_server.root / "Phone").mkdir()
+    result = host.test_config({**values, "folder": "Phone"})
+    assert result["ok"] is True and "Phone ist beschreibbar" in result["message"]
+    assert list(dav_server.root.iterdir()) == [dav_server.root / "Phone"]
+    assert not list((dav_server.root / "Phone").iterdir())
+    wrong = host.test_config({**values, "password": "nope"})
+    assert wrong["ok"] is False and "password" in wrong["errors"]
+    missing = host.test_config({"url": dav_server.url, "username": USER})
+    assert missing["errors"] == {"password": "is required"}
+    link = host.test_config({**values, "public_link": True})
+    assert "public_link" in link["errors"]
+    # After saving, the stored password is used when the field stays empty.
+    assert configure(host, dav_server.url) == {"ok": True}
+    assert host.test_config({"url": dav_server.url, "username": USER})["ok"] is True
+    # ... but never for another server or user.
+    other = host.test_config({"url": dav_server.url, "username": "bob"})
+    assert other["errors"] == {"password": "is required"}
+    host.assert_never_sent(PASSWORD)
+    assert PASSWORD not in caplog.text
+
+
+def test_test_connection_read_only_folder(plugin, dav_server, monkeypatch) -> None:
+    from blueferry_webdav import service as service_module
+
+    monkeypatch.setattr(service_module, "_can_write", lambda client, url: False)
+    host = plugin()
+    result = host.test_config({"url": dav_server.url, "username": USER, "password": PASSWORD})
+    assert result["ok"] is False and result["errors"] == {
+        "folder": "keine Schreibrechte in diesem Ordner",
+    }
 
 
 def test_upload_lists_and_opens(plugin, dav_server, tmp_path) -> None:

@@ -1,6 +1,7 @@
 """The plugin process: share target, card and notifications for WebDAV."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -16,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from blueferry.plugin_api.config import ConfigError
+from blueferry.plugin_api.config_flow import ConfigTestResult
 from blueferry.plugin_api.manifest import PluginManifest
 from blueferry_plugin_kit.clipboard import copy_to_clipboard
+from blueferry_plugin_kit.configtest import failed, passed, secret_or_stored
 from blueferry_plugin_kit.dav.webdav import (
     DavError,
     Entry,
@@ -30,7 +33,13 @@ from blueferry_plugin_kit.dav.webdav import (
 from blueferry_webdav import __version__
 from blueferry_webdav.cache import DownloadCache, blocked
 from blueferry_webdav.i18n import german, t
-from blueferry_webdav.settings import DEFAULT_FOLDER, Settings, SettingsError, SettingsStore
+from blueferry_webdav.settings import (
+    DEFAULT_FOLDER,
+    DEFAULT_MAX_SIZE_MB,
+    Settings,
+    SettingsError,
+    SettingsStore,
+)
 from blueferry_webdav.surfaces import (
     NOTIFY_ITEM,
     Action,
@@ -62,6 +71,35 @@ _CONFIG_TEXT = {
 def new_client(*args: Any, **kwargs: Any) -> WebDavClient:
     """A :class:`WebDavClient` that sends this plugin's User-Agent."""
     return WebDavClient(*args, user_agent=USER_AGENT, **kwargs)
+
+
+_PROPFIND_ZERO = (
+    b'<?xml version="1.0" encoding="utf-8"?>'
+    b'<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>'
+)
+
+
+def _status(client: WebDavClient, method: str, url: str, **kwargs: Any) -> int:
+    response = client.request(method, url, **kwargs)
+    try:
+        return response.status
+    finally:
+        response.close()  # type: ignore[attr-defined]
+
+
+def _propfind_status(client: WebDavClient, url: str) -> int:
+    return _status(client, "PROPFIND", url, headers={
+        "Depth": "0", "Content-Type": "application/xml; charset=utf-8",
+    }, body=_PROPFIND_ZERO)
+
+
+def _can_write(client: WebDavClient, folder_url: str) -> bool:
+    """Create and remove an empty probe folder below ``folder_url``."""
+    probe = f"{folder_url}.blueferry-write-test-{secrets.token_hex(6)}/"
+    if _status(client, "MKCOL", probe) not in (200, 201):
+        return False
+    _status(client, "DELETE", probe)
+    return True
 
 
 def text_for(error: DavError) -> str:
@@ -213,8 +251,11 @@ class WebDavService(SurfacesService):
             "web_url": settings.web_url,
         }
 
-    def apply_config(self, values: dict[str, object]) -> None:
-        """Worker thread. Log in with the new settings, then store them."""
+    def _validated(self, values: dict[str, object]) -> tuple[Settings, str, Settings | None]:
+        """The settings in ``values`` and the password to use (typed or stored).
+
+        Raises ConfigError for a field. Also returns the current settings.
+        """
         allow_http_lan = bool(values.get("allow_http_lan"))
         try:
             url = normalize_base(str(values.get("url") or ""), allow_http_lan=allow_http_lan)
@@ -232,15 +273,27 @@ class WebDavService(SurfacesService):
             current = self._settings.load()
         except SettingsError:
             current = None
-        password = str(values.get("password") or "")
-        if not password and current is not None:
-            try:
-                password = self._settings.password(current)
-            except SettingsError:
-                password = ""
-        if not password:
-            raise ConfigError("password", "is required")
-        client = self._client_factory(url, username, password, allow_http_lan=allow_http_lan)
+
+        def stored() -> str:
+            # The stored password belongs to the stored server and user only.
+            if current is None or (current.url, current.username) != (url, username):
+                return ""
+            return self._settings.password(current)
+
+        password = secret_or_stored(values, "password", stored)
+        settings = Settings(
+            url=url, username=username, folder=folder,
+            public_link=bool(values.get("public_link")),
+            max_size_mb=int(values.get("max_size_mb") or DEFAULT_MAX_SIZE_MB),
+            allow_http_lan=allow_http_lan, web_url=str(values.get("web_url") or ""),
+        )
+        return settings, password, current
+
+    def _logged_in(self, settings: Settings, password: str) -> tuple[WebDavClient, bool]:
+        """A client that has logged in, and whether the server is Nextcloud."""
+        client = self._client_factory(
+            settings.url, settings.username, password, allow_http_lan=settings.allow_http_lan,
+        )
         try:
             client.check()
         except DavError as error:
@@ -249,16 +302,37 @@ class WebDavService(SurfacesService):
             )
             raise ConfigError(field_name, reason) from None
         nextcloud = client.detect_nextcloud()
-        public_link = bool(values.get("public_link"))
-        if public_link and not nextcloud:
+        if settings.public_link and not nextcloud:
             raise ConfigError(
                 "public_link", "needs a Nextcloud address (…/remote.php/dav/files/USER/)",
             )
-        settings = Settings(
-            url=url, username=username, folder=folder, public_link=public_link,
-            max_size_mb=int(values.get("max_size_mb") or 2048), allow_http_lan=allow_http_lan,
-            web_url=str(values.get("web_url") or ""), nextcloud=nextcloud,
-        )
+        return client, nextcloud
+
+    def test_config(self, values: dict[str, object]) -> ConfigTestResult:
+        """Worker thread. Log in and probe the folder; store nothing."""
+        settings, password, _current = self._validated(values)
+        client, _nextcloud = self._logged_in(settings, password)
+        segments = folder_segments(settings.folder)
+        try:
+            exists = _propfind_status(client, client.folder_url(segments)) == 207
+            probe_in = client.folder_url(segments) if exists else client.base
+            writable = _can_write(client, probe_in)
+        except DavError as error:
+            raise ConfigError("url", text_for(error)) from None
+        log.info("settings tested (writable: %s)", writable)
+        user, folder = settings.username, settings.folder
+        if not writable:
+            return failed(t("test_read_only", user=user, folder=folder),
+                          folder=t("test_folder_read_only"))
+        return passed(t("test_writable" if exists else "test_will_create",
+                        user=user, folder=folder))
+
+    def apply_config(self, values: dict[str, object]) -> None:
+        """Worker thread. Log in with the new settings, then store them."""
+        settings, password, current = self._validated(values)
+        _client, nextcloud = self._logged_in(settings, password)
+        url, username = settings.url, settings.username
+        settings = dataclasses.replace(settings, nextcloud=nextcloud)
         prefer_keyring = current is None or current.key_store != "file"
         try:
             self._settings.save(settings, password, prefer_keyring=prefer_keyring)

@@ -2,14 +2,15 @@
 Id=io.weirdware.blueferry.webdav
 Name=WebDAV files
 Version=0.1.2
-ApiVersion=1.2
-MinBlueFerry=0.8
+ApiVersion=1.3
+MinBlueFerry=0.8.1
 Capabilities=card;share;notify;
 Homepage=https://github.com/joshii-h/blueferry-plugin-webdav
 Source=https://github.com/joshii-h/blueferry-plugin-webdav
 Exec=blueferry-webdav serve
 Cli=blueferry-webdav
 Alias=webdav
+ConfigTest=true
 
 [ConfigGroup account]
 Label=Account
