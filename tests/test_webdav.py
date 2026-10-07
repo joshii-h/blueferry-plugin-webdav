@@ -95,10 +95,11 @@ def test_all_surfaces_live_on_plugin1() -> None:
             "Notify", "GetInfo", "Status", "GetConfig", "SetConfig", "TestConfig"} <= members
 
 
-def test_info_reports_contract_1_3(plugin) -> None:
+def test_info_reports_contract_1_3_or_newer(plugin) -> None:
     host = plugin()
     info = host.info()
-    assert info["api_version"] == 1 and info["api_minor"] == 3
+    # GetInfo names the plugin-api the plugin runs with (1.4 brings the log file).
+    assert info["api_version"] == 1 and info["api_minor"] >= 3
     assert set(info["capabilities"]) == {"card", "share", "notify"}
     assert host.share_targets() == [
         {"id": "webdav", "label": "Ablage (WebDAV)", "icon": "folder-cloud"},

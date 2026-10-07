@@ -144,7 +144,7 @@ python3 -m venv --system-site-packages .venv   # dbus-python, PyGObject, libsecr
 BlueFerry repository. The WebDAV client, the clipboard helper and the
 keyring store come from
 [blueferry-plugin-kit](https://github.com/joshii-h/blueferry-plugin-kit)
-(tag `kit-v0.2.0`), which also has their tests, as does the Nextcloud
+(tag `kit-v0.3.0`), which also has their tests, as does the Nextcloud
 Login Flow v2 (`blueferry_plugin_kit.auth.nextcloud`). The tests run a real
 WebDAV server (wsgidav) and a fake Nextcloud (chunked upload v2, OCS
 shares, Login Flow v2 over https with a test CA) on localhost, and drive
