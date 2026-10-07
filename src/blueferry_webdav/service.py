@@ -17,6 +17,7 @@ from typing import Any
 
 from blueferry.plugin_api.config import ConfigError
 from blueferry.plugin_api.manifest import PluginManifest
+from blueferry_plugin_kit.clipboard import copy_to_clipboard
 from blueferry_plugin_kit.dav.webdav import (
     DavError,
     Entry,
@@ -28,7 +29,6 @@ from blueferry_plugin_kit.dav.webdav import (
 
 from blueferry_webdav import __version__
 from blueferry_webdav.cache import DownloadCache, blocked
-from blueferry_webdav.clipboard import copy_to_clipboard
 from blueferry_webdav.i18n import german, t
 from blueferry_webdav.settings import DEFAULT_FOLDER, Settings, SettingsError, SettingsStore
 from blueferry_webdav.surfaces import (
