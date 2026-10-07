@@ -8,11 +8,13 @@
   through the OCS sharing API.
 
 Only https, except http to loopback and, when the user allows it, to hosts
-on the local network (checked again against the resolved addresses before
-each request). Redirects are refused (they would carry the password to
-another URL), every request has a timeout, every response body a size
-limit, and remote names are percent-encoded segment by segment. Errors are
-short tokens; nothing from the server and no credentials are logged.
+on the local network: the name is resolved once per operation, every
+address must be private, and all requests of the operation connect to that
+checked address (no DNS rebinding between check and connect). Redirects
+are refused (they would carry the password to another URL), every request
+has a timeout, every response body a size limit, and remote names are
+percent-encoded segment by segment. Errors are short tokens; nothing from
+the server and no credentials are logged.
 """
 from __future__ import annotations
 
@@ -307,24 +309,39 @@ class WebDavClient:
         self.nextcloud = layout if nextcloud else None
         self.layout = layout
         self._resolve = resolve or _resolve
+        # Plain HTTP only: the address checked once and then used for every
+        # request of this client (one client per operation), so a DNS
+        # answer that changes in between (rebinding) is never followed.
+        self._pinned: str | None = None
 
     def __repr__(self) -> str:  # never show the credentials
         return f"WebDavClient({self.base!r})"
 
     # ---- plumbing ------------------------------------------------------------
 
-    def _check_target(self, parts: urllib.parse.SplitResult) -> None:
+    def _check_target(self, parts: urllib.parse.SplitResult) -> str:
+        """The address to connect to; raise DavError when not allowed.
+
+        HTTPS connects by name (the certificate check covers the name).
+        Plain HTTP to a LAN name is resolved once, every address must be
+        private, and the connection then goes to that checked address, not
+        to whatever a second lookup would return.
+        """
         base = urllib.parse.urlsplit(self.base)
         if (parts.scheme, parts.hostname, parts.port) != (base.scheme, base.hostname, base.port):
             raise DavError("invalid-url")  # credentials only ever go to the configured server
         host = (parts.hostname or "").lower()
-        if parts.scheme == "http" and not _loopback(host):
+        if parts.scheme != "http" or _loopback(host):
+            return parts.hostname or ""
+        if self._pinned is None:
             try:
                 addresses = self._resolve(host)
             except OSError:
                 raise DavError("network") from None
             if not addresses or not all(_private_address(a) for a in addresses):
                 raise DavError("insecure")
+            self._pinned = addresses[0].split("%", 1)[0]
+        return self._pinned
 
     def request(
         self,
@@ -339,20 +356,21 @@ class WebDavClient:
     ) -> Response:
         """Send one request; the caller closes the response with ``close()``."""
         parts = urllib.parse.urlsplit(url)
-        self._check_target(parts)
+        address = self._check_target(parts)
         if parts.scheme == "https":
             connection: http.client.HTTPConnection = http.client.HTTPSConnection(
-                parts.hostname or "", parts.port, timeout=self.timeout,
+                address, parts.port, timeout=self.timeout,
                 context=ssl.create_default_context(),
             )
         else:
             connection = http.client.HTTPConnection(
-                parts.hostname or "", parts.port, timeout=self.timeout,
+                address, parts.port or 80, timeout=self.timeout,
             )
         path = parts.path + (f"?{parts.query}" if parts.query else "")
         try:
-            connection.putrequest(method, path or "/", skip_accept_encoding=True)
+            connection.putrequest(method, path or "/", skip_host=True, skip_accept_encoding=True)
             all_headers = {
+                "Host": parts.netloc,
                 "Authorization": self._auth,
                 "User-Agent": f"blueferry-webdav/{__version__}",
                 **(headers or {}),

@@ -84,8 +84,10 @@ stream; "Ordner öffnen" opens the WebDAV folder URL unless `web_url` is set.
 
 - Only `https://`. Redirects are refused (they would carry the password
   elsewhere); every request has a timeout; requests only go to the
-  configured server. With `allow_http_lan`, the resolved addresses must be
-  private before each request.
+  configured server. With `allow_http_lan`, the name is resolved once per
+  operation, every address must be private, and all requests of that
+  operation connect to the checked address with the original `Host` header,
+  so a DNS answer that changes in between (rebinding) is never followed.
 - Local file names are reduced to one safe path segment and
   percent-encoded; no `..`, no separators, no control characters. Existing
   files are never overwritten: a second `report.pdf` becomes

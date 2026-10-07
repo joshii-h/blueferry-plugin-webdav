@@ -176,6 +176,25 @@ def test_lan_http_is_checked_against_resolved_addresses() -> None:
     assert caught.value.token == "insecure"
 
 
+def test_lan_http_connects_to_the_checked_address_only(dav_server) -> None:
+    port = urllib.parse.urlsplit(dav_server.url).port
+    answers = iter([["127.0.0.1"], ["93.184.216.34"]])
+    lookups: list[str] = []
+
+    def resolve(host: str) -> list[str]:
+        lookups.append(host)
+        return next(answers)
+
+    client = WebDavClient(f"http://nas.local:{port}/dav/", USER, PASSWORD, allow_http_lan=True,
+                          resolve=resolve)
+    client.check()
+    client.list_folder(())
+    client.ensure_folder(("pinned",))
+    # One lookup for the whole operation: a second answer (now public)
+    # is never asked for, and the requests went to the checked address.
+    assert lookups == ["nas.local"]
+
+
 def test_requests_never_leave_the_configured_server() -> None:
     client = WebDavClient("https://dav.example.org/", USER, PASSWORD)
     with pytest.raises(DavError) as caught:
