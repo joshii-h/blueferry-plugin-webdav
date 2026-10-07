@@ -475,3 +475,62 @@ def test_cli_status_and_forget(capsys) -> None:
     assert cli.main(["status"]) == 0
     assert "Not configured" in capsys.readouterr().out
     assert cli.main(["forget"]) == 0
+
+
+# ---- clipboard helper (from blueferry-plugin-shortcuts) -------------------------
+
+
+class _Runner:
+    def __init__(self, help_text="  --sensitive  Hint", returncode=0) -> None:
+        self.calls: list = []
+        self.help_text = help_text
+        self.returncode = returncode
+
+    def __call__(self, argv, **kwargs):
+        import subprocess
+
+        self.calls.append((argv, kwargs))
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, self.help_text, "")
+        return subprocess.CompletedProcess(argv, self.returncode, b"", b"")
+
+
+def _which(name: str) -> str:
+    return f"/usr/bin/{name}"
+
+
+def test_clipboard_uses_stdin_sensitive_hint_and_a_clean_environment() -> None:
+    import subprocess
+
+    from blueferry_webdav.clipboard import copy_to_clipboard
+
+    runner = _Runner()
+    environ = {"WAYLAND_DISPLAY": "wayland-0", "PATH": "/usr/bin", "SECRET_ENV": "x",
+               "LC_ALL": "C"}
+    assert copy_to_clipboard("https://cloud/s/abc", environ=environ, which=_which, run=runner)
+    argv, kwargs = runner.calls[-1]
+    assert argv == ["/usr/bin/wl-copy", "--type", "text/plain;charset=utf-8", "--sensitive"]
+    assert kwargs["input"] == b"https://cloud/s/abc" and kwargs["stdout"] == subprocess.DEVNULL
+    assert "SECRET_ENV" not in kwargs["env"] and kwargs["env"]["LC_ALL"] == "C"
+
+
+def test_clipboard_finds_the_wayland_socket_and_falls_back_to_x11(tmp_path) -> None:
+    import socket
+
+    from blueferry_webdav.clipboard import copy_to_clipboard, helper_environment
+
+    runtime = tmp_path / "run"
+    runtime.mkdir()
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(runtime / "wayland-1"))
+        env = helper_environment({"XDG_RUNTIME_DIR": str(runtime)})
+        assert env is not None and env["WAYLAND_DISPLAY"] == "wayland-1"
+    assert helper_environment({"XDG_RUNTIME_DIR": str(tmp_path / "none")}) is None
+    runner = _Runner()
+    x11 = {"DISPLAY": ":0", "XAUTHORITY": "/tmp/xa", "SECRET_ENV": "x",
+           "XDG_RUNTIME_DIR": str(tmp_path / "none")}
+    assert copy_to_clipboard("link", environ=x11, which=_which, run=runner)
+    argv, kwargs = runner.calls[-1]
+    assert argv[0] == "/usr/bin/xclip" and kwargs["input"] == b"link"
+    assert kwargs["env"] == {"DISPLAY": ":0", "XAUTHORITY": "/tmp/xa"}
+    assert not copy_to_clipboard("link", environ={}, which=_which, run=runner)

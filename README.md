@@ -63,6 +63,10 @@ blueferry plugins config io.weirdware.blueferry.webdav \
 - Public links use the OCS sharing API with read-only permission. If
   sharing by link is disabled on the server, the upload still succeeds and
   the notification says so.
+- "Link kopieren" uses `wl-copy` (wl-clipboard) with `--sensitive` when
+  available, so clipboard managers keep the link out of their history; on
+  X11 `xclip` or `xsel`. The link goes through stdin and the helper gets
+  only an allowlisted environment.
 
 ### SFTPGo
 

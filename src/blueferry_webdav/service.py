@@ -6,9 +6,7 @@ import json
 import logging
 import os
 import secrets
-import shutil
 import stat
-import subprocess
 import threading
 import time
 import urllib.parse
@@ -21,6 +19,7 @@ from blueferry.plugin_api.config import ConfigError
 from blueferry.plugin_api.manifest import PluginManifest
 
 from blueferry_webdav.cache import DownloadCache, blocked
+from blueferry_webdav.clipboard import copy_to_clipboard
 from blueferry_webdav.settings import DEFAULT_FOLDER, Settings, SettingsError, SettingsStore
 from blueferry_webdav.surfaces import (
     NOTIFY_ITEM,
@@ -96,28 +95,6 @@ def icon_for(name: str, content_type: str) -> str:
         "image": "image-x-generic", "video": "video-x-generic", "audio": "audio-x-generic",
         "text": "text-x-generic",
     }.get(major, "text-x-generic" if not content_type else "application-octet-stream")
-
-
-def copy_to_clipboard(text: str) -> bool:
-    """Put ``text`` on the desktop clipboard with wl-copy, xclip or xsel."""
-    candidates = []
-    if os.environ.get("WAYLAND_DISPLAY"):
-        candidates.append(["wl-copy"])
-    if os.environ.get("DISPLAY"):
-        candidates += [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]
-    for command in candidates:
-        program = shutil.which(command[0])
-        if not program:
-            continue
-        try:
-            subprocess.run(  # nosec B603 - fixed argv, the link goes to stdin
-                [program, *command[1:]], input=text.encode(), timeout=5, check=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            return True
-        except (OSError, subprocess.SubprocessError):
-            continue
-    return False
 
 
 @dataclass
