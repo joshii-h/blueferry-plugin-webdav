@@ -15,11 +15,11 @@ requires-python = ">=3.10"
 dependencies = [
   "blueferry-plugin-api @ git+https://github.com/joshii-h/blueferry@plugin-api-v1.2.0#subdirectory=plugin-api",
   # PROPFIND answers come from the server: no DTDs, no entities.
-  "defusedxml>=0.7",
+  "defusedxml>=0.7,<1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.5", "wsgidav>=4.3", "cheroot>=10"]
+dev = ["pytest>=7,<10", "ruff>=0.5,<1", "wsgidav>=4.3,<5", "cheroot>=10,<12"]
 
 [project.urls]
 Homepage = "https://github.com/joshii-h/blueferry-plugin-webdav"
