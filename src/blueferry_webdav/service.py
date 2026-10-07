@@ -19,6 +19,9 @@ from typing import Any
 from blueferry.plugin_api.config import ConfigError
 from blueferry.plugin_api.config_flow import ConfigTestResult
 from blueferry.plugin_api.manifest import PluginManifest
+from blueferry_plugin_kit import xmlsafe
+from blueferry_plugin_kit.auth.nextcloud import MESSAGES as LOGIN_MESSAGES
+from blueferry_plugin_kit.auth.nextcloud import Credentials, NextcloudLogin
 from blueferry_plugin_kit.clipboard import copy_to_clipboard
 from blueferry_plugin_kit.configtest import failed, passed, secret_or_stored
 from blueferry_plugin_kit.dav.webdav import (
@@ -53,6 +56,8 @@ log = logging.getLogger(__name__)
 
 TARGET_ID = "webdav"
 USER_AGENT = f"blueferry-webdav/{__version__}"
+# Shown by Nextcloud on "Connect to your account" and in the devices list.
+USER_AGENT_LOGIN = "BlueFerry WebDAV"
 RECENT_COUNT = 5
 LIST_TTL_SEC = 60.0
 PROGRESS_INTERVAL_SEC = 1.0
@@ -91,6 +96,55 @@ def _propfind_status(client: WebDavClient, url: str) -> int:
     return _status(client, "PROPFIND", url, headers={
         "Depth": "0", "Content-Type": "application/xml; charset=utf-8",
     }, body=_PROPFIND_ZERO)
+
+
+_PRINCIPAL_BODY = (
+    b'<?xml version="1.0" encoding="utf-8"?>'
+    b'<d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>'
+)
+_PRINCIPAL_PREFIX = "/remote.php/dav/principals/users/"
+MAX_LOGINS = 4
+
+
+def login_messages() -> dict[str, str]:
+    """The sign-in's messages in the user's language."""
+    return {key: t(f"login_{key}") for key in LOGIN_MESSAGES}
+
+
+def new_login(**kwargs: Any) -> NextcloudLogin:
+    """The Nextcloud sign-in as this plugin runs it (``kwargs`` for tests)."""
+    return NextcloudLogin(user_agent=USER_AGENT_LOGIN, messages=login_messages(), **kwargs)
+
+
+def nextcloud_user_id(client: WebDavClient, dav_root: str) -> str | None:
+    """The Nextcloud user id behind the login, from ``current-user-principal``.
+
+    The files live below ``/remote.php/dav/files/<user id>/``; the login
+    name (an e-mail address, for example) can differ from the id.
+    """
+    response = client.request("PROPFIND", dav_root, headers={
+        "Depth": "0", "Content-Type": "application/xml; charset=utf-8",
+    }, body=_PRINCIPAL_BODY)
+    try:
+        if response.status != 207:
+            return None
+        root = xmlsafe.fromstring(response.read(64 * 1024))
+    except (DavError, xmlsafe.XmlError, OSError):
+        return None
+    finally:
+        response.close()  # type: ignore[attr-defined]
+    for element in root.iter("{DAV:}current-user-principal"):
+        href = urllib.parse.unquote((element.findtext("{DAV:}href") or "").strip())
+        path = urllib.parse.urlsplit(href).path
+        index = path.find(_PRINCIPAL_PREFIX)
+        if index == -1:
+            continue
+        user = path[index + len(_PRINCIPAL_PREFIX):].strip("/")
+        if user and "/" not in user and user not in (".", "..") and all(
+            ch.isprintable() for ch in user
+        ):
+            return user
+    return None
 
 
 def _can_write(client: WebDavClient, folder_url: str) -> bool:
@@ -175,9 +229,13 @@ class WebDavService(SurfacesService):
         cache: DownloadCache | None = None,
         client_factory: Callable[..., WebDavClient] = new_client,
         clipboard: Callable[[str], bool] = copy_to_clipboard,
+        login: NextcloudLogin | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(manifest, bus, **kwargs)
+        self._login = login or new_login()
+        # The form values typed when a sign-in started, by login id.
+        self._login_values: OrderedDict[str, dict[str, object]] = OrderedDict()
         self._settings = settings or SettingsStore()
         self._cache = cache or DownloadCache()
         self._client_factory = client_factory
@@ -262,6 +320,9 @@ class WebDavService(SurfacesService):
         except DavError as error:
             raise ConfigError(*_CONFIG_TEXT.get(error.token, _CONFIG_TEXT["invalid-url"]))
         username = str(values.get("username") or "")
+        if not username:
+            # Not Required in the manifest: "Sign in with Nextcloud" fills it.
+            raise ConfigError("username", "is required")
         if ":" in username or len(username) > 256:
             raise ConfigError("username", "must not contain a colon")
         folder = str(values.get("folder") or DEFAULT_FOLDER)
@@ -348,6 +409,95 @@ class WebDavService(SurfacesService):
             self._last_error = ""
         log.info("settings saved (server type: %s)", "nextcloud" if nextcloud else "webdav")
         self.emit_card_changed()
+
+    # ---- Nextcloud sign-in (ConfigLogin=nextcloud) ---------------------------
+
+    def config_login(self, provider: str, values: dict[str, object]) -> object:
+        """Worker thread. Start Login Flow v2 at the typed server."""
+        step = self._login.login_step(str(values.get("url") or ""))
+        if step.login_id:
+            with self._lock:
+                self._login_values[step.login_id] = dict(values)
+                while len(self._login_values) > MAX_LOGINS:
+                    self._login_values.popitem(last=False)
+        return step
+
+    def config_login_status(self, login_id: str) -> object:
+        with self._lock:
+            values = dict(self._login_values.get(login_id, {}))
+        step = self._login.status_step(
+            login_id, lambda credentials: self._store_login(credentials, values),
+        )
+        if step.final:
+            with self._lock:
+                self._login_values.pop(login_id, None)
+        return step
+
+    def config_login_cancel(self, login_id: str) -> None:
+        self._login.cancel(login_id)
+        with self._lock:
+            self._login_values.pop(login_id, None)
+
+    def _store_login(self, credentials: Credentials, values: dict[str, object]) -> str:
+        """Check the new app password against WebDAV, then store it."""
+        try:
+            current = self._settings.load()
+        except SettingsError:
+            current = None
+        username, password = credentials.login_name, credentials.app_password
+        url = credentials.webdav_url
+        client = self._client_factory(url, username, password)
+        try:
+            try:
+                client.check()
+            except DavError as error:
+                if error.token != "not-found":
+                    raise
+                # The login name is not the user id (e.g. an e-mail login).
+                lookup = self._client_factory(credentials.dav_url + "/", username, password)
+                user_id = nextcloud_user_id(lookup, lookup.base)
+                if user_id is None:
+                    raise
+                url = f"{credentials.server}/remote.php/dav/files/" + \
+                    urllib.parse.quote(user_id, safe="@") + "/"
+                client = self._client_factory(url, username, password)
+                client.check()
+        except DavError as error:
+            field_name, reason = _CONFIG_TEXT.get(error.token, ("url", text_for(error)))
+            raise ConfigError(field_name, reason) from None
+        def option(key: str, default: object) -> object:
+            if key in values:
+                return values[key]
+            return getattr(current, key) if current is not None else default
+
+        try:
+            folder = "/".join(folder_segments(str(option("folder", DEFAULT_FOLDER)))) \
+                or DEFAULT_FOLDER
+        except ValueError:
+            folder = DEFAULT_FOLDER
+        settings = Settings(
+            url=client.base, username=username, folder=folder,
+            public_link=bool(option("public_link", False)),
+            max_size_mb=int(option("max_size_mb", DEFAULT_MAX_SIZE_MB) or DEFAULT_MAX_SIZE_MB),
+            allow_http_lan=bool(option("allow_http_lan", False)),
+            web_url=str(option("web_url", "") or ""), nextcloud=True,
+        )
+        prefer_keyring = current is None or current.key_store != "file"
+        try:
+            self._settings.save(settings, password, prefer_keyring=prefer_keyring)
+        except (SettingsError, OSError):
+            raise ConfigError("", t("login_store-failed")) from None
+        if current is not None and current.key_store == "keyring" and (
+            (current.url, current.username) != (settings.url, settings.username)
+        ):
+            self._settings.forget_keyring(current)
+        with self._lock:
+            self._listing = _Listing()
+            self._entries.clear()
+            self._last_error = ""
+        log.info("signed in with nextcloud; settings saved")
+        self.emit_card_changed()
+        return t("connected", user=username)
 
     # ---- share ---------------------------------------------------------------
 

@@ -33,6 +33,7 @@ class FakeNextcloud:
         self.shares: list[dict] = []
         self.log: list[tuple[str, str]] = []
         self.fail_chunk: int | None = None       # answer 507 to this chunk number
+        self.aliases: set[str] = set()           # other login names (e-mail login)
         self.clock = 1_760_000_000.0
         self._lock = threading.Lock()
         self.base = ""
@@ -55,6 +56,15 @@ class FakeNextcloud:
             return self._reply(start_response, 401, b"", headers=[
                 ("WWW-Authenticate", 'Basic realm="Nextcloud"'),
             ])
+        if path.rstrip("/") == f"{PREFIX}/remote.php/dav" and method == "PROPFIND":
+            principal = f"{PREFIX}/remote.php/dav/principals/users/{self.user}/"
+            xml = ('<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response>'
+                   f"<d:href>{PREFIX}/remote.php/dav/</d:href><d:propstat><d:prop>"
+                   f"<d:current-user-principal><d:href>{principal}</d:href>"
+                   "</d:current-user-principal></d:prop>"
+                   "<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                   "</d:multistatus>").encode()
+            return self._reply(start_response, 207, xml, "application/xml")
         files = f"{PREFIX}/remote.php/dav/files/{self.user}"
         uploads = f"{PREFIX}/remote.php/dav/uploads/{self.user}/"
         with self._lock:
@@ -69,8 +79,10 @@ class FakeNextcloud:
 
     def _authorized(self, environ) -> bool:
         header = environ.get("HTTP_AUTHORIZATION", "")
-        expected = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
-        return header == f"Basic {expected}"
+        return any(
+            header == "Basic " + base64.b64encode(f"{name}:{self.password}".encode()).decode()
+            for name in {self.user, *self.aliases}
+        )
 
     @staticmethod
     def _reply(start_response, status, body=b"", content_type="text/plain", headers=()):

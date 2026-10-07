@@ -11,6 +11,7 @@ Exec=blueferry-webdav serve
 Cli=blueferry-webdav
 Alias=webdav
 ConfigTest=true
+ConfigLogin=nextcloud
 
 [ConfigGroup account]
 Label=Account
@@ -29,9 +30,9 @@ HelpUrl=https://docs.nextcloud.com/server/latest/user_manual/en/files/access_web
 [Config username]
 Label=User name
 Type=string
-Required=true
 Group=account
 Placeholder=anna
+Help=Filled in by "Sign in with Nextcloud"; needed when you enter the address by hand.
 
 [Config password]
 Label=App password
