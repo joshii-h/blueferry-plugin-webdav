@@ -20,8 +20,15 @@ SCHEMA = "io.weirdware.blueferry.webdav.Password"
 DEFAULT_FOLDER = "BlueFerry"
 DEFAULT_MAX_SIZE_MB = 2048
 
-# Every except clause for SettingsError catches the kit's errors as well.
-SettingsError = _secrets.SecretsError
+
+
+class SettingsError(_secrets.SecretsError):
+    """The settings or the stored password are unusable; names no secret.
+
+    A subclass of the kit's ``SecretsError`` (so either name catches it);
+    the store re-raises the kit's errors under this name, so logs and the
+    base service's "plugin call failed: …" say ``SettingsError``.
+    """
 
 
 def config_dir() -> Path:
@@ -76,6 +83,8 @@ class SettingsStore(KeyringStore):
             return None
         except ValueError:
             raise SettingsError("config.json is not valid JSON") from None
+        except _secrets.SecretsError as error:
+            raise SettingsError(str(error)) from None
         if not isinstance(raw, dict) or not isinstance(raw.get("url"), str):
             raise SettingsError("config.json has no WebDAV address")
         return Settings(
@@ -92,20 +101,30 @@ class SettingsStore(KeyringStore):
 
     def save(self, settings: Settings, password: str, *, prefer_keyring: bool = True) -> str:
         """Store the password (keyring first) and the config; return the store."""
-        store = self.save_secret(
-            self._attributes(settings), password, prefer_keyring=prefer_keyring,
-        )
-        values = asdict(settings)
-        values["key_store"] = store
-        write_private(self.config_path, json.dumps(values, indent=2) + "\n")
+        try:
+            store = self.save_secret(
+                self._attributes(settings), password, prefer_keyring=prefer_keyring,
+            )
+            values = asdict(settings)
+            values["key_store"] = store
+            write_private(self.config_path, json.dumps(values, indent=2) + "\n")
+        except SettingsError:
+            raise
+        except _secrets.SecretsError as error:
+            raise SettingsError(str(error)) from None
         return store
 
     def password(self, settings: Settings) -> str:
-        return self.load_secret(
-            settings.key_store, self._attributes(settings),
-            missing="the password file is missing; enter it again",
-            empty="no password stored; enter it in the plugin settings",
-        )
+        try:
+            return self.load_secret(
+                settings.key_store, self._attributes(settings),
+                missing="the password file is missing; enter it again",
+                empty="no password stored; enter it in the plugin settings",
+            )
+        except SettingsError:
+            raise
+        except _secrets.SecretsError as error:
+            raise SettingsError(str(error)) from None
 
     def forget(self) -> None:
         settings = None

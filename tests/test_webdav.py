@@ -354,3 +354,27 @@ def test_cli_status_and_forget(capsys) -> None:
     assert cli.main(["status"]) == 0
     assert "Not configured" in capsys.readouterr().out
     assert cli.main(["forget"]) == 0
+
+
+def test_settings_errors_carry_their_own_name(tmp_path, caplog) -> None:
+    from blueferry_plugin_kit.secrets import SecretsError
+
+    from blueferry_webdav.settings import Settings, SettingsError
+
+    store = SettingsStore(tmp_path / "config", secret=FakeSecret())
+    settings = Settings(url="https://dav.example.org/", username=USER, key_store="file")
+    with pytest.raises(SettingsError) as caught:
+        store.password(settings)
+    assert type(caught.value) is SettingsError and isinstance(caught.value, SecretsError)
+    store.directory.mkdir(parents=True, exist_ok=True)
+    store.config_path.write_text("{}")
+    store.config_path.chmod(0o644)
+    with pytest.raises(SettingsError) as caught:
+        store.load()
+    assert type(caught.value) is SettingsError
+    # An unexpected failure in a call is logged by its class name.
+    caplog.set_level(logging.INFO)
+    service = inline_service(WebDavService, load_manifest(), None, settings=store)
+    replies = []
+    service.run_async(lambda: store.password(settings) or "", replies.append, replies.append)
+    assert "SettingsError" in caplog.text and "SecretsError" not in caplog.text
