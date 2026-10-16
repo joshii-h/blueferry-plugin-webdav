@@ -1,12 +1,18 @@
-"""Plugin contract 1.2 surfaces: ``card``, ``share`` and ``notify``.
+"""Plugin contract surfaces: ``card``, ``share`` and ``notify``.
 
-Implements PLUGIN-SURFACES v1.2 on top of ``blueferry.plugin_api``'s
-:class:`PluginService`. As the spec binds it, every v1.2 method and signal
-(GetCardItems, CardChanged, InvokeAction, ShareTargets, SendFiles, Notify)
-lives on the existing ``io.weirdware.BlueFerry.Plugin1`` interface at the
-plugin's object path; the manifest's capabilities tell the core which of
-them to call. Once ``blueferry-plugin-api`` ships its own helpers
-(``CardItem``, ``emit_card_changed()``, ...) this module can use them.
+Implements PLUGIN-SURFACES on top of ``blueferry.plugin_api``'s
+:class:`NotifyService`. As the spec binds it, every surface method and
+signal (GetCardItems, CardChanged, InvokeAction, ShareTargets, SendFiles,
+NotifyChanged, GetPendingNotification) lives on the existing
+``io.weirdware.BlueFerry.Plugin1`` interface at the plugin's object path;
+the manifest's capabilities tell the core which of them to call.
+
+Popups follow ApiVersion 1.5: :meth:`NotifyService.emit_notify` queues the
+popup in the plugin and emits the content-free ``NotifyChanged()``; the
+core fetches it with ``GetPendingNotification()``, so no text travels on
+the bus. A click on its button arrives as ``InvokeAction("notify", ...)``.
+Card and share stay implemented here, so their replies keep this module's
+clipping rules.
 
 Everything sent to the core is plain text, clipped to the limits of the
 spec (title 80, subtitle 160, label 40 characters, at most 8 items with 3
@@ -24,7 +30,7 @@ import blueferry.plugin_api as api
 import dbus
 import dbus.service
 from blueferry.plugin_api import PLUGIN_INTERFACE
-from blueferry.plugin_api.service import PluginService
+from blueferry.plugin_api.service import NotifyService
 
 SURFACES_MINOR = 2
 
@@ -108,8 +114,13 @@ def action_result(ok: bool, message: str | None = None, open_uri: str | None = N
     })
 
 
-class SurfacesService(PluginService):
-    """Card, Share and Notify; subclasses implement the hooks."""
+class SurfacesService(NotifyService):
+    """Card, Share and Notify; subclasses implement the hooks.
+
+    Notify (``emit_notify``, ``NotifyChanged``, ``GetPendingNotification``)
+    comes from :class:`NotifyService`; the methods defined here, among them
+    ``InvokeAction``, take precedence over the inherited ones.
+    """
 
     # ---- hooks -------------------------------------------------------------
 
@@ -134,18 +145,6 @@ class SurfacesService(PluginService):
     def emit_card_changed(self) -> None:
         """Thread-safe: tell the core to call GetCardItems again."""
         self._to_main(self.CardChanged)
-
-    def emit_notify(
-        self, title: str, body: str, icon: str, action_label: str = "", action_id: str = "",
-    ) -> None:
-        """Thread-safe: ask the core for a desktop notification."""
-        if action_id and not ITEM_ID.fullmatch(action_id):
-            raise ValueError("invalid action id")
-        values = (
-            plain(title, MAX_TITLE), plain(body, MAX_SUBTITLE), _icon(icon) or "",
-            plain(action_label, MAX_LABEL) if action_id else "", action_id,
-        )
-        self._to_main(lambda: self.Notify(*values))
 
     def start_job(self, work: Any) -> None:
         """Run ``work`` on its own worker; the service does not idle out meanwhile.
@@ -254,9 +253,3 @@ class SurfacesService(PluginService):
             return self.send_files(target, files)
 
         self.run_async(work, reply, error)
-
-    # ---- Notify ------------------------------------------------------------
-
-    @dbus.service.signal(PLUGIN_INTERFACE, signature="sssss")
-    def Notify(self, title, body, icon, action_label, action_id) -> None:
-        """The core shows a desktop notification under its policy."""

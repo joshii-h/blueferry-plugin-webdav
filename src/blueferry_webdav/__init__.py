@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from blueferry.plugin_api.manifest import PluginManifest
 
 PLUGIN_ID = "io.weirdware.blueferry.webdav"
-__version__ = "0.2.2"
-# The surfaces of plugin contract 1.2 this plugin implements (it speaks 1.3).
+__version__ = "0.3.0"
+# The surfaces this plugin implements (it speaks contract 1.5: popups are
+# fetched with GetPendingNotification after the content-free NotifyChanged).
 CAPABILITIES = ("card", "share", "notify")
 
 

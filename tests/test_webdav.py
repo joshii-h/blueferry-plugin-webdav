@@ -76,7 +76,7 @@ def test_manifest_declares_the_surfaces_and_settings() -> None:
     manifest = load_manifest()
     assert manifest.id == PLUGIN_ID
     assert manifest.capabilities == CAPABILITIES
-    assert "ApiVersion=1.3" in manifest_text()
+    assert "ApiVersion=1.5" in manifest_text()
     assert manifest.config_test is True
     keys = [field.key for field in manifest.config]
     assert keys == ["url", "username", "password", "folder", "public_link", "max_size_mb",
@@ -92,14 +92,17 @@ def test_all_surfaces_live_on_plugin1() -> None:
     assert set(table) - {"org.freedesktop.DBus.Introspectable"} == {PLUGIN_INTERFACE}
     members = set(table[PLUGIN_INTERFACE])
     assert {"GetCardItems", "CardChanged", "InvokeAction", "ShareTargets", "SendFiles",
-            "Notify", "GetInfo", "Status", "GetConfig", "SetConfig", "TestConfig"} <= members
+            "NotifyChanged", "GetPendingNotification", "GetInfo", "Status", "GetConfig",
+            "SetConfig", "TestConfig"} <= members
+    # The 1.5 host no longer listens to the old signal with the popup text.
+    assert "Notify" not in members
 
 
-def test_info_reports_contract_1_3_or_newer(plugin) -> None:
+def test_info_reports_contract_1_5_or_newer(plugin) -> None:
     host = plugin()
     info = host.info()
-    # GetInfo names the plugin-api the plugin runs with (1.4 brings the log file).
-    assert info["api_version"] == 1 and info["api_minor"] >= 3
+    # GetInfo names the plugin-api the plugin runs with (1.5 queues popups).
+    assert info["api_version"] == 1 and info["api_minor"] >= 5
     assert set(info["capabilities"]) == {"card", "share", "notify"}
     assert host.share_targets() == [
         {"id": "webdav", "label": "Ablage (WebDAV)", "icon": "folder-cloud"},
@@ -220,6 +223,49 @@ def test_upload_lists_and_opens(plugin, dav_server, tmp_path) -> None:
     local = Path(urllib.parse.unquote(result["open_uri"][len("file://"):]))
     assert local.read_bytes() == b"second"
     assert oct(local.stat().st_mode & 0o777) == "0o600"
+
+
+def test_popup_waits_for_get_pending_notification(plugin, dav_server, tmp_path) -> None:
+    """1.5: a content-free NotifyChanged, the text only via GetPendingNotification."""
+    from blueferry.plugin_api.service import NotifyService
+
+    from blueferry_webdav.surfaces import SurfacesService
+
+    # NotifyService brings the queue; the plugin's own surface methods win.
+    assert issubclass(WebDavService, NotifyService)
+    for name in ("InvokeAction", "GetCardItems", "ShareTargets", "SendFiles", "GetInfo"):
+        assert getattr(WebDavService, name) is SurfacesService.__dict__[name], name
+
+    host = plugin()
+    signals: list[tuple] = []
+    fetched: list[dict] = []
+    on_changed, call = host.service.NotifyChanged, host.call
+
+    def notify_changed(*args):
+        signals.append(args)
+        on_changed(*args)
+
+    def recording_call(method, *args):
+        reply = call(method, *args)
+        if method == "GetPendingNotification":
+            fetched.append(json.loads(reply))
+        return reply
+
+    host.service.NotifyChanged = notify_changed
+    host.call = recording_call
+    assert configure(host, dav_server.url) == {"ok": True}
+    assert host.send_files("webdav", [write(tmp_path, "a.txt", b"a")])["ok"] is True
+    host.wait_for(lambda: bool(host.notifications))
+
+    assert signals == [()]
+    assert fetched[0]["notification"]["title"] == "Hochgeladen"
+    assert fetched[0]["notification"]["action_label"] == "Ordner öffnen"
+    assert fetched[-1]["more"] is False
+    # Fetching removes the popup from the queue.
+    assert json.loads(call("GetPendingNotification")) == {"notification": None, "more": False}
+    # The button still reaches the plugin as InvokeAction("notify", action_id).
+    opened = host.click_notification()
+    assert opened["ok"] is True and opened["open_uri"] == dav_server.url + "BlueFerry/"
 
 
 def test_texts_follow_the_locale(plugin, dav_server, tmp_path, monkeypatch) -> None:

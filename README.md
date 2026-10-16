@@ -20,10 +20,13 @@ Texts are German or English, following the locale (`LC_ALL`,
 ("Storage (WebDAV)", "Uploaded", "Recently uploaded" in English).
 
 It runs as its own process on the session bus and implements the plugin
-contract 1.3 (`card`, `share`, `notify`, guided settings with "Test
+contract 1.5 (`card`, `share`, `notify`, guided settings with "Test
 connection" and "Sign in with Nextcloud"; see `PLUGINS.md` in the BlueFerry
-repository). It needs a BlueFerry that understands contract 1.3; older
-versions ignore the plugin with a message.
+repository). Popups stay in the plugin until BlueFerry fetches them: the
+plugin emits the content-free `NotifyChanged()` and BlueFerry asks
+`GetPendingNotification()`, so no file name or link travels on the session
+bus. It needs a BlueFerry that understands contract 1.5 (unreleased so far);
+older versions ignore the plugin with a message.
 
 ## Install
 
@@ -140,12 +143,12 @@ python3 -m venv --system-site-packages .venv   # dbus-python, PyGObject, libsecr
 .venv/bin/ruff check . && .venv/bin/python -m pytest -q
 ```
 
-`blueferry-plugin-api` comes from the `plugin-api` directory of the
-BlueFerry repository. The WebDAV client, the clipboard helper and the
-keyring store come from
+`blueferry-plugin-api` (tag `plugin-api-v1.5.0`, not released yet) comes
+from the `plugin-api` directory of the BlueFerry repository. The WebDAV
+client, the clipboard helper and the keyring store come from
 [blueferry-plugin-kit](https://github.com/joshii-h/blueferry-plugin-kit)
-(tag `kit-v0.3.0`), which also has their tests, as does the Nextcloud
-Login Flow v2 (`blueferry_plugin_kit.auth.nextcloud`). The tests run a real
+(tag `kit-v0.4.0`, not released yet), which also has their tests, as does
+the Nextcloud Login Flow v2 (`blueferry_plugin_kit.auth.nextcloud`). The tests run a real
 WebDAV server (wsgidav) and a fake Nextcloud (chunked upload v2, OCS
 shares, Login Flow v2 over https with a test CA) on localhost, and drive
 the plugin through a fake BlueFerry core that checks every reply against
