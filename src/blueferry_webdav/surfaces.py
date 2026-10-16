@@ -32,8 +32,6 @@ import dbus.service
 from blueferry.plugin_api import PLUGIN_INTERFACE
 from blueferry.plugin_api.service import NotifyService
 
-SURFACES_MINOR = 2
-
 MAX_ITEMS = 8
 MAX_ACTIONS = 3
 MAX_TITLE = 80
@@ -182,7 +180,7 @@ class SurfacesService(NotifyService):
             "name": self.manifest.name,
             "version": self.manifest.version,
             "api_version": api.API_VERSION,
-            "api_minor": max(api.API_MINOR, SURFACES_MINOR),
+            "api_minor": api.API_MINOR,
             "capabilities": list(self.manifest.capabilities),
         })
 
